@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+build/
+*.spec
+
+# Venv
+.venv/
+venv/
+env/
+
+# Blender
+*.blend1
+*.blend2
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs & runtime
+*.log
+.kimodo_runtime/
+.kimodo_venv/
+*.fbx.bak
+
+# Project-local research / notes (never ship)
+.research/
+.agent/
+memory/
+.claude/
+
+# Release artefacts — distributed via GitHub Releases, not tracked in git
+dist/*.zip
+dist/*.zip.tmp

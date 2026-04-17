@@ -1,0 +1,13 @@
+# Kimodo Motion Server dependencies
+# Install into a Python 3.10 venv with PyTorch cu128
+
+# --- Core ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
+
+# --- Kimodo (install separately) ---
+# pip install git+https://github.com/nv-tlabs/kimodo.git
+
+# --- PyTorch (install FIRST, before kimodo) ---
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
