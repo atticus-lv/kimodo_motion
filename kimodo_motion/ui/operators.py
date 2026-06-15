@@ -297,13 +297,17 @@ class KIMODO_OT_generate(Operator):
 
     @staticmethod
     def _retarget_and_apply(context, target_arm, npz_path, prompt, num_samples):
-        """Run retarget loop: export target → N samples → import N actions."""
-        from ..retarget import fbx_bridge
+        """Run retarget loop: in-Blender bpy retarget → N Actions on target_arm.
+
+        Cross-platform (incl. Apple Silicon / Metal): no Autodesk FBX SDK and no venv
+        subprocess — the motion is applied directly from the NPZ inside Blender. See
+        retarget/bpy_retarget.py. The legacy fbxsdkpy path (fbx_bridge/fbx_runner) is
+        kept in the tree for reference but no longer used.
+        """
+        from ..retarget import fbx_bridge, bpy_retarget
         from ..retarget.mapping import load_preset
 
-        prefs = get_prefs()
         scene = context.scene
-        venv_python = manager.get_venv_python(prefs.venv_path)
 
         # Determine mapping preset (UI override or auto-detect)
         ui_preset = scene.kimodo_retarget_preset
@@ -322,46 +326,24 @@ class KIMODO_OT_generate(Operator):
         print(f"[Kimodo] Using bone mapping preset: {preset_name}")
         bone_mapping = load_preset(preset_name)
 
-        # Export target armature to temp FBX (cached)
-        target_fbx = fbx_bridge.export_target_fbx(target_arm, use_cache=True)
-
-        # Make sure output dir exists
-        os.makedirs(fbx_bridge.TEMP_OUTPUTS_DIR, exist_ok=True)
-
         safe_prompt = fbx_bridge._sanitize_name(prompt)
         created_actions = []
 
         for i in range(num_samples):
-            output_fbx = os.path.join(
-                fbx_bridge.TEMP_OUTPUTS_DIR,
-                f"retargeted_{safe_prompt}_s{i + 1:02d}.fbx",
-            )
-            fbx_bridge.run_fbx_retarget(
-                venv_python=venv_python,
+            action_name = f"Kimodo_{safe_prompt}_s{i + 1:02d}"
+            action = bpy_retarget.retarget_sample(
+                target_arm=target_arm,
                 npz_path=npz_path,
-                target_fbx=target_fbx,
-                output_fbx=output_fbx,
                 bone_mapping=bone_mapping,
                 sample_index=i,
-                yaw_offset=0.0,
-                timeout=prefs.fbx_retarget_timeout,
-            )
-
-            action_name = f"Kimodo_{safe_prompt}_s{i + 1:02d}"
-            # Only assign as active on first sample; keep others as fake_user orphans
-            action = fbx_bridge.import_action_from_fbx(
-                fbx_path=output_fbx,
-                target_arm=target_arm,
                 action_name=action_name,
-                assign_as_active=(i == 0),
+                with_root=True,
             )
             created_actions.append(action)
 
-            if not prefs.keep_retarget_temp:
-                try:
-                    os.remove(output_fbx)
-                except OSError:
-                    pass
+        # First sample stays active on the rig; the rest are fake-user orphans
+        if created_actions and target_arm.animation_data:
+            target_arm.animation_data.action = created_actions[0]
 
         return created_actions
 
