@@ -79,10 +79,17 @@ def retarget_sample(
     d = np.load(npz_path, allow_pickle=True)
     posed = np.asarray(d["posed_joints"])
     grm = np.asarray(d["global_rot_mats"])
-    if posed.ndim == 4:  # [B,T,J,3] -> pick sample
+    # Clamp the requested sample to what the NPZ actually contains: if the server
+    # produced fewer samples than the UI asked for, fall back to the last one rather
+    # than raising an opaque numpy IndexError.
+    if posed.ndim == 4:  # [B,T,J,3]
+        nb = posed.shape[0]
+        if sample_index >= nb:
+            print(f"[Kimodo] WARN: requested sample {sample_index} but NPZ has {nb}; using sample {nb - 1}.")
+            sample_index = nb - 1
         posed = posed[sample_index]
-    if grm.ndim == 5:
-        grm = grm[sample_index]
+    if grm.ndim == 5:  # [B,T,J,3,3]
+        grm = grm[min(sample_index, grm.shape[0] - 1)]
     T, J = posed.shape[:2]
     names = [str(x) for x in d["joint_names"]]
     idx = {n.lower(): i for i, n in enumerate(names)}
