@@ -144,10 +144,12 @@ out = {
 
 try:
     import torch
+    _mps = getattr(torch.backends, "mps", None)
     out["pytorch"] = {
         "version": torch.__version__,
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda_version": getattr(torch.version, "cuda", None),
+        "mps_available": bool(_mps and _mps.is_available()),
     }
 except Exception as e:
     out["pytorch"] = {"error": f"{type(e).__name__}: {e}"}

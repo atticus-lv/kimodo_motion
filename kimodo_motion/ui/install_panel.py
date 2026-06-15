@@ -75,14 +75,15 @@ def _run_precheck_sync() -> dict[str, Any]:
         }
 
     from ..preferences import get_prefs  # lazy to avoid import-time cycles
+    from ..server import manager  # cross-platform venv python (bin/python on macOS)
 
     try:
-        prefs = get_prefs()
-        venv_py = Path(prefs.venv_path) / "Scripts" / "python.exe"
+        venv_path = get_prefs().venv_path
     except Exception:  # noqa: BLE001
-        venv_py = Path.home() / ".kimodo_venv" / "Scripts" / "python.exe"
+        venv_path = str(Path.home() / ".kimodo_venv")
+    venv_py = Path(manager.get_venv_python(venv_path))
 
-    # Prefer running INSIDE the venv so we can introspect torch/fbxsdkpy.
+    # Prefer running INSIDE the venv so we can introspect torch/kimodo (and MPS on macOS).
     interp = str(venv_py) if venv_py.is_file() else sys.executable
 
     try:
@@ -154,8 +155,8 @@ class KIMODO_OT_install_runtime(Operator):
     bl_idname = "kimodo.install_runtime"
     bl_label = "一键安装 Runtime"
     bl_description = (
-        "打开 PowerShell 窗口运行 install.ps1。"
-        "会装 Python venv + PyTorch cu128 + kimodo + fbxsdkpy + fastapi。"
+        "打开终端窗口运行安装脚本（Windows: install.ps1 / macOS: install_mac.sh）。"
+        "会装 Python venv + PyTorch + kimodo + fastapi 服务依赖。"
         "耗时 10-30 分钟，占用 5GB+ 磁盘。"
     )
 
@@ -193,41 +194,76 @@ class KIMODO_OT_install_runtime(Operator):
         layout.prop(self, "mirror")
         layout.prop(self, "pip_mirror")
         box = layout.box()
-        box.label(text="会打开新 PowerShell 窗口显示进度", icon="INFO")
+        term = "终端 (Terminal)" if sys.platform == "darwin" else "PowerShell"
+        box.label(text=f"会打开新 {term} 窗口显示进度", icon="INFO")
         box.label(text="关窗 = 取消；进度同时写到 install.log", icon="CONSOLE")
+        if sys.platform == "darwin":
+            box.label(text="macOS: 走 Metal/MPS，无需 fbxsdkpy", icon="INFO")
 
     def execute(self, context):
-        script = _installer_dir() / "install.ps1"
-        if not script.is_file():
-            self.report({"ERROR"}, f"install.ps1 not found at {script}")
-            return {"CANCELLED"}
-        if sys.platform != "win32":
-            self.report({"ERROR"}, "目前只支持 Windows")
-            return {"CANCELLED"}
+        if sys.platform == "win32":
+            script = _installer_dir() / "install.ps1"
+            if not script.is_file():
+                self.report({"ERROR"}, f"install.ps1 not found at {script}")
+                return {"CANCELLED"}
+            args = [
+                "powershell.exe",
+                "-NoExit",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-Mirror",
+                self.mirror,
+                "-PipMirror",
+                self.pip_mirror,
+            ]
+            if self.proxy.strip():
+                args += ["-Proxy", self.proxy.strip()]
+            try:
+                subprocess.Popen(
+                    args,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    cwd=str(_installer_dir()),
+                )
+            except Exception as e:  # noqa: BLE001
+                self.report({"ERROR"}, f"无法启动 PowerShell: {e}")
+                return {"CANCELLED"}
 
-        args = [
-            "powershell.exe",
-            "-NoExit",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-Mirror",
-            self.mirror,
-            "-PipMirror",
-            self.pip_mirror,
-        ]
-        if self.proxy.strip():
-            args += ["-Proxy", self.proxy.strip()]
+        elif sys.platform == "darwin":
+            import os
+            import shlex
 
-        try:
-            subprocess.Popen(
-                args,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-                cwd=str(_installer_dir()),
+            script = _installer_dir() / "install_mac.sh"
+            if not script.is_file():
+                self.report({"ERROR"}, f"install_mac.sh not found at {script}")
+                return {"CANCELLED"}
+            try:
+                os.chmod(script, 0o755)
+            except OSError:
+                pass
+            # Pass options to the script via env vars (cleaner than arg-quoting through osascript)
+            env_prefix = f"KIMODO_PIP_MIRROR={shlex.quote(self.pip_mirror)} "
+            if self.proxy.strip():
+                env_prefix += f"KIMODO_PROXY={shlex.quote(self.proxy.strip())} "
+            shell_cmd = (
+                f"cd {shlex.quote(str(_installer_dir()))} && "
+                f"{env_prefix}bash {shlex.quote(str(script))}"
             )
-        except Exception as e:  # noqa: BLE001
-            self.report({"ERROR"}, f"无法启动 PowerShell: {e}")
+            # Open Terminal.app running the command so the user sees live progress.
+            esc = shell_cmd.replace("\\", "\\\\").replace('"', '\\"')
+            try:
+                subprocess.Popen([
+                    "osascript",
+                    "-e", f'tell application "Terminal" to do script "{esc}"',
+                    "-e", 'tell application "Terminal" to activate',
+                ])
+            except Exception as e:  # noqa: BLE001
+                self.report({"ERROR"}, f"无法启动 Terminal: {e}")
+                return {"CANCELLED"}
+
+        else:
+            self.report({"ERROR"}, "暂不支持该平台（仅 Windows / macOS）")
             return {"CANCELLED"}
 
         self.report({"INFO"}, "已打开安装窗口。装完后点'重新检查'刷新状态")
@@ -258,9 +294,14 @@ class KIMODO_OT_open_install_log(Operator):
             self.report({"WARNING"}, f"日志不存在: {log}")
             return {"CANCELLED"}
         try:
-            subprocess.Popen(["explorer", "/select,", str(log)])
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", str(log)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(log)])
+            else:
+                subprocess.Popen(["xdg-open", str(log.parent)])
         except Exception as e:  # noqa: BLE001
-            self.report({"ERROR"}, f"打不开资源管理器: {e}")
+            self.report({"ERROR"}, f"打不开文件位置: {e}")
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -300,9 +341,10 @@ class KIMODO_OT_download_model(Operator):
 
     def execute(self, context):
         from ..preferences import get_prefs
+        from ..server import manager
 
         prefs = get_prefs()
-        venv_py = Path(prefs.venv_path) / "Scripts" / "python.exe"
+        venv_py = Path(manager.get_venv_python(prefs.venv_path))  # cross-platform venv python
         if not venv_py.is_file():
             self.report({"ERROR"}, f"venv python 不存在: {venv_py}")
             return {"CANCELLED"}
@@ -312,17 +354,32 @@ class KIMODO_OT_download_model(Operator):
             self.report({"ERROR"}, f"download_model.py 不存在: {script}")
             return {"CANCELLED"}
 
-        args = [
-            "powershell.exe",
-            "-NoExit",
-            "-Command",
-            f"& '{venv_py}' '{script}' --mirror {self.mirror}",
-        ]
-        if self.skip_llama:
-            args[-1] += " --skip-llama"
-
+        extra = " --skip-llama" if self.skip_llama else ""
         try:
-            subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            if sys.platform == "win32":
+                args = [
+                    "powershell.exe",
+                    "-NoExit",
+                    "-Command",
+                    f"& '{venv_py}' '{script}' --mirror {self.mirror}{extra}",
+                ]
+                subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            elif sys.platform == "darwin":
+                import shlex
+
+                shell_cmd = (
+                    f"{shlex.quote(str(venv_py))} {shlex.quote(str(script))} "
+                    f"--mirror {shlex.quote(self.mirror)}{extra}"
+                )
+                esc = shell_cmd.replace("\\", "\\\\").replace('"', '\\"')
+                subprocess.Popen([
+                    "osascript",
+                    "-e", f'tell application "Terminal" to do script "{esc}"',
+                    "-e", 'tell application "Terminal" to activate',
+                ])
+            else:
+                subprocess.Popen([str(venv_py), str(script), "--mirror", self.mirror]
+                                 + (["--skip-llama"] if self.skip_llama else []))
         except Exception as e:  # noqa: BLE001
             self.report({"ERROR"}, f"无法启动下载: {e}")
             return {"CANCELLED"}
@@ -401,33 +458,42 @@ class KIMODO_PT_install(Panel):
             if detail:
                 r.label(text=detail)
 
+        is_mac = sys.platform == "darwin"
         gpu = pc.get("gpu")
+        pyt = pc.get("pytorch")
         if gpu:
             _row(
                 f"GPU: {gpu['name']}",
                 True,
                 f"cc={gpu['compute_cap']} drv={gpu['driver']}",
             )
+        elif is_mac:
+            mps = bool((pyt or {}).get("mps_available"))
+            _row("GPU: Apple / Metal", mps, "MPS 可用" if mps else "MPS 不可用，将用 CPU")
         else:
             _row("GPU: 未检测", False, "需要 NVIDIA 驱动")
 
         _row("venv", pc.get("venv_ready", False), pc.get("venv_exe") or "未创建")
 
-        pyt = pc.get("pytorch")
         if pyt and "error" not in (pyt or {}):
-            _row(
-                "PyTorch",
-                bool(pyt.get("cuda_available")),
-                f"{pyt.get('version')} cuda={pyt.get('cuda_available')}",
-            )
+            # On macOS the relevant backend is MPS (Metal); on Windows it's CUDA.
+            backend_ok = bool(pyt.get("mps_available") if is_mac else pyt.get("cuda_available"))
+            backend = "mps" if is_mac else "cuda"
+            backend_val = pyt.get("mps_available") if is_mac else pyt.get("cuda_available")
+            _row("PyTorch", backend_ok, f"{pyt.get('version')} {backend}={backend_val}")
         else:
             _row("PyTorch", False, (pyt or {}).get("error", "未安装")[:40])
 
-        _row(
-            "fbxsdkpy (FBX SDK)",
-            pc.get("fbxsdkpy", {}).get("installed", False),
-            pc.get("fbxsdkpy", {}).get("version") or "未安装",
-        )
+        # fbxsdkpy is only needed by the legacy Windows FBX retarget path; on macOS
+        # retargeting runs inside Blender, so it is intentionally absent.
+        if is_mac:
+            _row("FBX retarget", True, "Blender 内置（macOS 无需 fbxsdkpy）")
+        else:
+            _row(
+                "fbxsdkpy (FBX SDK)",
+                pc.get("fbxsdkpy", {}).get("installed", False),
+                pc.get("fbxsdkpy", {}).get("version") or "未安装",
+            )
 
         km = pc.get("kimodo", {})
         _row("kimodo", km.get("installed", False), km.get("version") or "未安装")
