@@ -77,9 +77,21 @@ def generate(req: GenerateRequest):
         try:
             from kimodo import load_model
 
-            print(f"[Kimodo] Loading model: {req.model} ...")
+            # Device resolution: prefer CUDA, then Apple Silicon MPS (Metal), then CPU.
+            # Uses the kimodo fork's device_utils when available (MPS support); falls
+            # back to a plain CUDA/CPU probe on upstream kimodo. Override with KIMODO_DEVICE.
+            requested = os.environ.get("KIMODO_DEVICE", "auto")
+            try:
+                from kimodo.device_utils import resolve_torch_device
+
+                device = resolve_torch_device(requested)
+            except Exception:
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"[Kimodo] Loading model: {req.model} on device '{device}' ...")
             t0 = time.time()
-            _model = load_model(req.model, device="cuda")
+            _model = load_model(req.model, device=device)
             _model_name = req.model
             _load_time = round(time.time() - t0, 1)
             print(f"[Kimodo] Model loaded in {_load_time}s")
