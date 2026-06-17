@@ -21,12 +21,15 @@ is tracked as the next iteration; T-pose rigs are correct today.
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Optional
 
 import bpy
 import numpy as np
 from mathutils import Matrix, Quaternion, Vector
+
+log = logging.getLogger(__name__)
 
 _AXIS_FIX = {
     "x+90": Matrix.Rotation(math.radians(90), 4, "X"),
@@ -85,7 +88,7 @@ def retarget_sample(
     if posed.ndim == 4:  # [B,T,J,3]
         nb = posed.shape[0]
         if sample_index >= nb:
-            print(f"[Kimodo] WARN: requested sample {sample_index} but NPZ has {nb}; using sample {nb - 1}.")
+            log.warning("Requested sample %d but NPZ has %d; using sample %d.", sample_index, nb, nb - 1)
             sample_index = nb - 1
         posed = posed[sample_index]
     if grm.ndim == 5:  # [B,T,J,3,3]
@@ -94,7 +97,7 @@ def retarget_sample(
     names = [str(x) for x in d["joint_names"]]
     idx = {n.lower(): i for i, n in enumerate(names)}
     if "hips" not in idx:
-        print("[Kimodo] WARN: no 'Hips' joint in NPZ joint_names; using joint 0 as root.")
+        log.warning("No 'Hips' joint in NPZ joint_names; using joint 0 as root.")
     hips = idx.get("hips", 0)
 
     # rest positions (for height/scale): neutral_joints if present, else frame 0
@@ -116,7 +119,7 @@ def retarget_sample(
         raise RuntimeError("No bone mapping pairs resolved against the target armature.")
     hips_target = next((tn for si, tn in pairs if si == hips), None)
     if with_root and hips_target is None:
-        print("[Kimodo] WARN: Hips not in bone mapping — root translation skipped (in-place motion).")
+        log.warning("Hips not in bone mapping — root translation skipped (in-place motion).")
 
     arm = target_arm
     bones = arm.data.bones
@@ -157,15 +160,15 @@ def retarget_sample(
 
     for f in range(T):
         sc.frame_set(f)
-        # Bones are set in `names` (parent-before-child) order; pose_bone.matrix updates
-        # the bone's pose_mat synchronously, so a child read later in the same frame sees
-        # the parent's new pose without a full per-bone view_layer.update() (which would
-        # cost T x B depsgraph evaluations). One update per frame keeps the chain coherent.
-        bpy.context.view_layer.update()
         for si, tn in pairs:
             pb = arm.pose.bones[tn]
             s_world = _npmat_to_quat(grm[f, si])
             t_world = (Cq @ s_world @ Cq_inv) @ off[tn]
+            # Bones are set in `names` (parent-before-child) order. Flush the parent's
+            # just-set pose into the depsgraph before reading/placing this child — a
+            # pose_bone.matrix assignment does NOT propagate to children synchronously,
+            # so without this the FK lags one level and deep chains drift (~0.1 m).
+            bpy.context.view_layer.update()
             m = t_world.to_matrix().to_4x4()
             if with_root and si == hips:
                 disp_world = C3 @ (Vector(posed[f, hips]) - s_anchor) * scale
