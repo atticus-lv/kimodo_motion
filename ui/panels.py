@@ -103,14 +103,35 @@ class KIMODO_PT_main(Panel):
         row.prop(scene, "kimodo_diffusion_steps")
         box.prop(scene, "kimodo_seed")
 
-        # ── Generate button ──
-        sub = layout.column()
-        sub.scale_y = 1.5
-        sub.operator("kimodo.generate", icon="MOD_WAVE")
+        # ── Generate: progress bar while running, button otherwise ──
+        from .operators import GEN_PROGRESS
 
-        # Show why button is disabled (if poll fails)
-        if not (target and target.type == "ARMATURE" and len(target.data.bones) >= 15):
-            sub.enabled = False
+        if GEN_PROGRESS.get("running"):
+            phase = GEN_PROGRESS.get("phase", "")
+            step = GEN_PROGRESS.get("step", 0) or 0
+            total = GEN_PROGRESS.get("total", 0) or 0
+            col = layout.column()
+            col.scale_y = 1.5
+            if phase in ("starting", "loading") or total <= 0:
+                # Model load / pre-sampling / retarget: no step count to show yet.
+                label = {
+                    "starting": "正在启动…",
+                    "loading": "加载模型到设备…",
+                    "retarget": "重定向到骨架…",
+                }.get(phase, "生成中…")
+                col.progress(factor=0.0, text=label, type="BAR")
+            else:
+                frac = max(0.0, min(1.0, step / total))
+                col.progress(factor=frac, text=f"扩散 {step}/{total}", type="BAR")
+        else:
+            sub = layout.column()
+            sub.scale_y = 1.5
+            sub.operator("kimodo.generate", icon="MOD_WAVE")
+            # Show why button is disabled (if poll fails)
+            if not (
+                target and target.type == "ARMATURE" and len(target.data.bones) >= 15
+            ):
+                sub.enabled = False
 
 
 class KIMODO_PT_actions(Panel):

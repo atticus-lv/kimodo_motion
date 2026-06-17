@@ -27,6 +27,13 @@ class KimodoClient:
         except Exception:
             return None
 
+    def progress(self, timeout: float = 1.5) -> Optional[dict]:
+        """Poll live generation progress: {running, phase, step, total}. None if unreachable."""
+        try:
+            return self._get("/progress", timeout=timeout)
+        except Exception:
+            return None
+
     # ── Generation ──
 
     def generate(

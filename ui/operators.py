@@ -14,6 +14,23 @@ from ..server.client import KimodoClient
 log = logging.getLogger(__name__)
 
 
+# Live generation progress, written by the modal operator below and read by the
+# Kimodo panel to draw a progress bar. Mirrors the server's GET /progress, plus a
+# client-side "retarget" phase for the in-Blender stage that runs after sampling.
+GEN_PROGRESS = {"running": False, "phase": "", "step": 0, "total": 0}
+
+
+def _tag_view3d_redraw() -> None:
+    """Force the N-panel to repaint so the progress bar advances between modal ticks."""
+    wm = bpy.context.window_manager
+    if not wm:
+        return
+    for window in wm.windows:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
 # ── Server Control ──
 
 
@@ -198,6 +215,7 @@ class KIMODO_OT_generate(Operator):
         )
         cls._thread.start()
 
+        GEN_PROGRESS.update(running=True, phase="starting", step=0, total=0)
         self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
         context.window_manager.modal_handler_add(self)
         self.report({"INFO"}, f"生成中: {final_prompt}")
@@ -209,12 +227,37 @@ class KIMODO_OT_generate(Operator):
 
         cls = KIMODO_OT_generate
         if cls._thread and cls._thread.is_alive():
+            # Poll the server's diffusion progress for the panel bar (localhost GET,
+            # ~ms; failures are non-fatal — the bar just won't advance this tick).
+            p = KimodoClient(get_server_url()).progress(timeout=1.0)
+            if p:
+                GEN_PROGRESS.update(
+                    running=True,
+                    phase=p.get("phase", "") or "sampling",
+                    step=int(p.get("step", 0) or 0),
+                    total=int(p.get("total", 0) or 0),
+                )
+            _tag_view3d_redraw()
             return {"PASS_THROUGH"}
 
         # Thread finished — stop timer, run retarget stage synchronously
         context.window_manager.event_timer_remove(self._timer)
         self._timer = None
+        # Sampling done; show the in-Blender retarget stage in the bar.
+        GEN_PROGRESS.update(running=True, phase="retarget", step=0, total=0)
+        _tag_view3d_redraw()
 
+        try:
+            return self._apply_result(context, cls)
+        finally:
+            # Whatever the outcome, clear the bar and repaint so the button returns.
+            GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+            _tag_view3d_redraw()
+
+    def _apply_result(self, context, cls):
+        """Stage 2 (main thread): validate the NPZ, retarget onto the armature, and
+        set the scene frame range. Returns a Blender operator status set. GEN_PROGRESS
+        is cleared by modal()'s finally regardless of which branch returns."""
         if cls._error:
             self.report({"ERROR"}, f"生成失败: {cls._error}")
             return {"CANCELLED"}
@@ -277,6 +320,8 @@ class KIMODO_OT_generate(Operator):
     def cancel(self, context):
         if self._timer:
             context.window_manager.event_timer_remove(self._timer)
+        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+        _tag_view3d_redraw()
 
     @staticmethod
     def _run_generation(

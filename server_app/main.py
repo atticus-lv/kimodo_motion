@@ -25,6 +25,32 @@ _model = None
 _model_name = None
 _load_time = None
 
+# Live generation progress, polled by the Blender panel via GET /progress.
+# phase: "idle" | "loading" (model -> device) | "sampling" (diffusion) | "done".
+# Mutated from the /generate worker thread, read from the /progress thread; a
+# plain dict of scalars is safe enough here (no compound invariant to protect).
+_progress = {"running": False, "phase": "idle", "step": 0, "total": 0}
+
+
+def _make_progress_bar():
+    """Return a tqdm-shaped callable that mirrors the diffusion loop into _progress.
+
+    Kimodo threads ``progress_bar`` down to ``for i in progress_bar(indices)``; we
+    pass this instead of tqdm so each denoising step bumps the shared counter the
+    panel polls. Accepts tqdm's extra args/kwargs (desc=, total=, ...) and ignores
+    them.
+    """
+
+    def bar(iterable, *args, **kwargs):
+        items = list(iterable)
+        _progress["total"] = len(items)
+        _progress["step"] = 0
+        for i, item in enumerate(items):
+            _progress["step"] = i + 1
+            yield item
+
+    return bar
+
 
 # ── Request / Response models ──
 
@@ -66,11 +92,19 @@ def version():
     }
 
 
+@app.get("/progress")
+def progress():
+    """Live generation progress for the Blender panel's progress bar."""
+    return dict(_progress)
+
+
 @app.post("/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest):
     global _model, _model_name, _load_time
 
     # Translation happens client-side (Blender plugin); server gets English prompt as-is.
+
+    _progress.update(running=True, phase="loading", step=0, total=req.diffusion_steps)
 
     # Lazy load model
     if _model is None or _model_name != req.model:
@@ -96,9 +130,11 @@ def generate(req: GenerateRequest):
             _load_time = round(time.time() - t0, 1)
             print(f"[Kimodo] Model loaded in {_load_time}s")
         except Exception as e:
+            _progress.update(running=False, phase="idle")
             raise HTTPException(status_code=500, detail=f"Model load failed: {e}")
 
     # Generate
+    _progress.update(phase="sampling", step=0, total=req.diffusion_steps)
     try:
         # Kimodo 官方 demo 用 `duration * fps - 1` 作为 num_frames；新客户端可直接传 num_frames
         if req.num_frames is not None:
@@ -111,6 +147,8 @@ def generate(req: GenerateRequest):
             "prompts": req.prompt,  # Kimodo accepts str or list[str]
             "num_frames": num_frames,
             "num_denoising_steps": req.diffusion_steps,
+            # Drives GET /progress; ignored shape-wise (tqdm-compatible callable).
+            "progress_bar": _make_progress_bar(),
         }
         if req.seed >= 0:
             import torch
@@ -118,8 +156,18 @@ def generate(req: GenerateRequest):
             torch.manual_seed(req.seed)
             torch.cuda.manual_seed(req.seed)
 
-        output = _model(**kwargs)
+        try:
+            output = _model(**kwargs)
+        except TypeError as te:
+            # Upstream kimodo build without a progress_bar kwarg — retry plain.
+            if "progress_bar" in str(te):
+                kwargs.pop("progress_bar", None)
+                output = _model(**kwargs)
+            else:
+                raise
+        _progress.update(running=False, phase="done")
     except Exception as e:
+        _progress.update(running=False, phase="idle")
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
     # Save output
