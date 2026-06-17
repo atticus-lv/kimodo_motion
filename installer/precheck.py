@@ -306,11 +306,19 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
     venv_py = _venv_python(DEFAULT_VENV)
     venv_ready = venv_py is not None
 
+    is_mac = sys.platform == "darwin"
+
     gpu = _probe_gpu()
     if gpu is None:
-        errors.append(
-            "nvidia-smi unavailable — 没检测到 NVIDIA GPU 或驱动，Kimodo 必须 NVIDIA"
-        )
+        if is_mac:
+            # Apple Silicon runs the Metal (MPS) backend; nvidia-smi is expected to be
+            # absent. Accelerator readiness is reported via the venv torch probe
+            # (pytorch.mps_available), not here, so this is NOT an error on macOS.
+            pass
+        else:
+            errors.append(
+                "nvidia-smi unavailable — 没检测到 NVIDIA GPU 或驱动，Kimodo 需要 NVIDIA（或 Apple Silicon/MPS）"
+            )
     else:
         try:
             cc = float(gpu["compute_cap"])
@@ -359,10 +367,16 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
             errors.append("PyTorch not installed in venv")
         elif "error" in pytorch:
             errors.append(f"PyTorch import error: {pytorch['error']}")
+        elif is_mac:
+            # On macOS the accelerator is MPS, never CUDA. A missing MPS backend is a
+            # soft fallback to CPU (slow but works), not a version mismatch.
+            if not pytorch.get("mps_available"):
+                warnings.append("PyTorch 已装但 MPS 不可用 — 将用 CPU（较慢）")
         elif not pytorch.get("cuda_available"):
             errors.append("PyTorch installed but CUDA unavailable — 版本不匹配")
-        if not fbxsdkpy_info["installed"]:
-            errors.append("fbxsdkpy not installed (FBX SDK Python wrapper)")
+        # NOTE: fbxsdkpy is NO LONGER required on any platform — retargeting runs
+        # inside Blender (retarget/bpy_retarget.py). The probe field is kept for the
+        # JSON contract, but its absence is not an error and must not gate next_action.
         if not kimodo_info["installed"]:
             errors.append("kimodo not installed")
     if not hf["present"] and kimodo_info["installed"]:
@@ -374,7 +388,7 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
     next_action: str | None
     if not venv_ready or not pytorch or (pytorch and "error" in pytorch):
         next_action = "run_install"
-    elif not fbxsdkpy_info["installed"] or not kimodo_info["installed"]:
+    elif not kimodo_info["installed"]:
         next_action = "run_install"
     elif not hf["present"]:
         next_action = "login_hf"

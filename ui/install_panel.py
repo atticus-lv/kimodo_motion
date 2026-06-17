@@ -475,8 +475,12 @@ class KIMODO_PT_install(Panel):
                 f"cc={gpu['compute_cap']} drv={gpu['driver']}",
             )
         elif is_mac:
-            mps = bool((pyt or {}).get("mps_available"))
-            _row("GPU: Apple / Metal", mps, "MPS 可用" if mps else "MPS 不可用，将用 CPU")
+            if pyt is None or "error" in (pyt or {}):
+                # torch not installed yet → MPS can't be probed. Don't cry wolf.
+                _row("GPU: Apple / Metal", True, "MPS 待装 PyTorch 后检测", icon_ok="INFO")
+            else:
+                mps = bool(pyt.get("mps_available"))
+                _row("GPU: Apple / Metal", mps, "MPS 可用" if mps else "MPS 不可用，将用 CPU")
         else:
             _row("GPU: 未检测", False, "需要 NVIDIA 驱动")
 
