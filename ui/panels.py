@@ -42,7 +42,25 @@ def _refresh_status_async(url: str) -> None:
 
     def _worker() -> None:
         global _status_cache, _status_time, _status_refreshing
-        result = KimodoClient(url).status(timeout=2.0)
+        client = KimodoClient(url)
+        result = client.status(timeout=2.0)
+        # Self-heal a stuck progress bar: if the panel still shows a generation/load
+        # as 'running' but the server reports it's idle, whatever owned GEN_PROGRESS
+        # (a modal/timer) must have died without clearing it — reconcile so the bar
+        # and the load/unload toggle recover. Skip the brief client-only phases
+        # ('retarget' runs in Blender, 'starting' precedes the server request).
+        try:
+            from .operators import GEN_PROGRESS
+
+            if GEN_PROGRESS.get("running") and GEN_PROGRESS.get("phase") not in (
+                "retarget",
+                "starting",
+            ):
+                prog = client.progress(timeout=2.0) or {}
+                if not prog.get("running"):
+                    GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+        except Exception:
+            pass
         with _status_lock:
             _status_cache = result
             _status_time = time.time()

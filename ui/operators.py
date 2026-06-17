@@ -31,6 +31,31 @@ def _tag_view3d_redraw() -> None:
                 area.tag_redraw()
 
 
+def _watch_thread_until_done(get_thread) -> None:
+    """Repaint while a worker thread runs, then clear GEN_PROGRESS when it ends.
+
+    Uses bpy.app.timers (fires on Blender's main loop regardless of UI events or
+    operator/modal state), which is far more reliable than waiting inside a modal
+    operator started from a panel button — that could miss its final tick and leave
+    the progress bar stuck on 'loading' forever.
+    """
+
+    def _tick():
+        t = get_thread()
+        if t is not None and t.is_alive():
+            _tag_view3d_redraw()
+            return 0.4  # keep polling
+        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+        _tag_view3d_redraw()
+        return None  # thread done — stop the timer
+
+    try:
+        bpy.app.timers.register(_tick, first_interval=0.3)
+    except Exception:
+        # Timer registration failed — fail safe by not leaving the bar stuck.
+        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+
+
 # ── Server Control ──
 
 
@@ -452,7 +477,6 @@ class KIMODO_OT_load_model(Operator):
     bl_description = "把 Kimodo 模型加载到设备内存（首次约 40-60s）。加载后生成无需再等加载。"
 
     _thread: threading.Thread = None
-    _timer = None
     _error: str = None
 
     def execute(self, context):
@@ -484,36 +508,13 @@ class KIMODO_OT_load_model(Operator):
         cls._thread = threading.Thread(target=_worker, args=(url, model), daemon=True)
         cls._thread.start()
 
+        # Drive the progress bar + clear it via a reliable app timer instead of a
+        # modal: the operator finishes immediately and the bar self-clears when the
+        # background load completes, even with no further UI events.
         GEN_PROGRESS.update(running=True, phase="loading", step=0, total=0)
-        self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
-        context.window_manager.modal_handler_add(self)
-        self.report({"INFO"}, f"加载模型: {model}")
-        return {"RUNNING_MODAL"}
-
-    def modal(self, context, event):
-        if event.type != "TIMER":
-            return {"PASS_THROUGH"}
-        cls = KIMODO_OT_load_model
-        if cls._thread and cls._thread.is_alive():
-            _tag_view3d_redraw()
-            return {"PASS_THROUGH"}
-
-        context.window_manager.event_timer_remove(self._timer)
-        self._timer = None
-        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
-        _tag_view3d_redraw()
-
-        if cls._error:
-            self.report({"ERROR"}, f"加载失败: {cls._error}")
-            return {"CANCELLED"}
-        self.report({"INFO"}, "模型已加载到内存")
+        _watch_thread_until_done(lambda: KIMODO_OT_load_model._thread)
+        self.report({"INFO"}, f"加载模型: {model}（约 40-60s，完成后按钮变为卸载）")
         return {"FINISHED"}
-
-    def cancel(self, context):
-        if self._timer:
-            context.window_manager.event_timer_remove(self._timer)
-        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
-        _tag_view3d_redraw()
 
 
 class KIMODO_OT_unload_model(Operator):
