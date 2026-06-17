@@ -301,14 +301,6 @@ class KIMODO_OT_generate(Operator):
         context.scene.render.fps = 30
         context.scene.render.fps_base = 1.0
 
-        # Optional cold unload
-        prefs = get_prefs()
-        if prefs.vram_mode == "COLD":
-            try:
-                KimodoClient(get_server_url()).unload_model()
-            except Exception:
-                pass
-
         msg = (
             f"完成: {len(actions)} 个 Action 已应用到 {target_arm.name}"
             if len(actions) > 1
@@ -454,10 +446,80 @@ class KIMODO_OT_delete_action(Operator):
 # ── Unload ──
 
 
+class KIMODO_OT_load_model(Operator):
+    bl_idname = "kimodo.load_model"
+    bl_label = "加载模型进内存"
+    bl_description = "把 Kimodo 模型加载到设备内存（首次约 40-60s）。加载后生成无需再等加载。"
+
+    _thread: threading.Thread = None
+    _timer = None
+    _error: str = None
+
+    def execute(self, context):
+        prefs = get_prefs()
+        url = get_server_url()
+
+        # Auto-start server if needed (same policy as generate).
+        if not manager.is_server_running(url):
+            if prefs.auto_start_server:
+                try:
+                    manager.start_server(prefs.venv_path, prefs.server_host, prefs.server_port)
+                except Exception as e:
+                    self.report({"ERROR"}, f"服务器启动失败: {e}")
+                    return {"CANCELLED"}
+            else:
+                self.report({"ERROR"}, "Kimodo 服务器未启动，请先点启动")
+                return {"CANCELLED"}
+
+        cls = KIMODO_OT_load_model
+        cls._error = None
+        model = prefs.model_name
+
+        def _worker(u, m):
+            try:
+                KimodoClient(u).load_model(m)
+            except Exception as e:
+                KIMODO_OT_load_model._error = str(e)
+
+        cls._thread = threading.Thread(target=_worker, args=(url, model), daemon=True)
+        cls._thread.start()
+
+        GEN_PROGRESS.update(running=True, phase="loading", step=0, total=0)
+        self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        self.report({"INFO"}, f"加载模型: {model}")
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        cls = KIMODO_OT_load_model
+        if cls._thread and cls._thread.is_alive():
+            _tag_view3d_redraw()
+            return {"PASS_THROUGH"}
+
+        context.window_manager.event_timer_remove(self._timer)
+        self._timer = None
+        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+        _tag_view3d_redraw()
+
+        if cls._error:
+            self.report({"ERROR"}, f"加载失败: {cls._error}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "模型已加载到内存")
+        return {"FINISHED"}
+
+    def cancel(self, context):
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+        GEN_PROGRESS.update(running=False, phase="", step=0, total=0)
+        _tag_view3d_redraw()
+
+
 class KIMODO_OT_unload_model(Operator):
     bl_idname = "kimodo.unload_model"
     bl_label = "卸载模型"
-    bl_description = "从显存中卸载 Kimodo 模型"
+    bl_description = "把 Kimodo 模型从设备内存中卸载，释放显存/内存"
 
     def execute(self, context):
         client = KimodoClient(get_server_url())
@@ -477,5 +539,6 @@ classes = [
     KIMODO_OT_generate,
     KIMODO_OT_switch_action,
     KIMODO_OT_delete_action,
+    KIMODO_OT_load_model,
     KIMODO_OT_unload_model,
 ]
