@@ -62,7 +62,7 @@ Double-click launcher: `installer\install.cmd`.
 **Command line (recommended — keep the runtime inside the project folder; delete one dir to remove):**
 
 ```bash
-cd /path/to/blender-kimodo-motion-metal
+cd /path/to/kimodo_motion
 KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash kimodo_motion/installer/install_mac.sh
 ```
 

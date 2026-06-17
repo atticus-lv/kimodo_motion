@@ -7,7 +7,7 @@ tagline = "NVIDIA Kimodo AI text-to-motion, retargeted to your rig"
 maintainer = "Xingxun, Atticus <lv3628800@gmail.com>"
 type = "add-on"
 
-website = "https://github.com/atticus-lv/blender-kimodo-motion-metal"
+website = "https://github.com/atticus-lv/kimodo_motion"
 
 tags = ["Animation", "Rigging", "Pipeline"]
 

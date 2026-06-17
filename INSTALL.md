@@ -59,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File kimodo_motion\installer\install.ps1 -Pr
 **命令行方式（推荐，把运行时装进项目文件夹，删一个目录即清）**：
 
 ```bash
-cd /path/to/blender-kimodo-motion-metal
+cd /path/to/kimodo_motion
 KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash kimodo_motion/installer/install_mac.sh
 ```
 
