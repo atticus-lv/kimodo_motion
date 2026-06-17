@@ -1,5 +1,6 @@
-"""Kimodo Motion operators — generation + FBX SDK retarget to selected armature."""
+"""Kimodo Motion operators — generation + in-Blender retarget to selected armature."""
 
+import logging
 import os
 import threading
 
@@ -9,6 +10,8 @@ from bpy.types import Operator
 from ..preferences import get_prefs, get_server_url
 from ..server import manager
 from ..server.client import KimodoClient
+
+log = logging.getLogger(__name__)
 
 
 # ── Server Control ──
@@ -302,9 +305,9 @@ class KIMODO_OT_generate(Operator):
         Cross-platform (incl. Apple Silicon / Metal): no Autodesk FBX SDK and no venv
         subprocess — the motion is applied directly from the NPZ inside Blender. See
         retarget/bpy_retarget.py. The legacy fbxsdkpy path (fbx_bridge/fbx_runner) is
-        kept in the tree for reference but no longer used.
+        kept in the tree for reference but excluded from the shipped extension.
         """
-        from ..retarget import fbx_bridge, bpy_retarget
+        from ..retarget import bpy_retarget, skeleton_detect
         from ..retarget.mapping import load_preset
 
         scene = context.scene
@@ -312,21 +315,20 @@ class KIMODO_OT_generate(Operator):
         # Determine mapping preset (UI override or auto-detect)
         ui_preset = scene.kimodo_retarget_preset
         if ui_preset == "AUTO":
-            preset_name = fbx_bridge.detect_skeleton_preset(target_arm)
+            preset_name = skeleton_detect.detect_skeleton_preset(target_arm)
             if preset_name is None:
-                # Fall back to mixamo as a best guess; log warning
-                print(
-                    f"[Kimodo] 骨架预设自动识别失败，默认使用 mixamo。"
-                    f"骨骼示例: {[b.name for b in target_arm.data.bones[:5]]}"
+                log.warning(
+                    "骨架预设自动识别失败，默认使用 mixamo。骨骼示例: %s",
+                    [b.name for b in target_arm.data.bones[:5]],
                 )
                 preset_name = "mixamo"
         else:
             preset_name = ui_preset
 
-        print(f"[Kimodo] Using bone mapping preset: {preset_name}")
+        log.info("Using bone mapping preset: %s", preset_name)
         bone_mapping = load_preset(preset_name)
 
-        safe_prompt = fbx_bridge._sanitize_name(prompt)
+        safe_prompt = skeleton_detect.sanitize_name(prompt)
         created_actions = []
 
         for i in range(num_samples):

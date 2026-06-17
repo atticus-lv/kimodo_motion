@@ -23,11 +23,11 @@ def _cached_server_alive(url: str) -> bool:
 
 
 def _detect_preset(arm_obj) -> str:
-    """Safe wrapper around fbx_bridge.detect_skeleton_preset (may be missing if deps fail)."""
+    """Safe wrapper around skeleton_detect.detect_skeleton_preset."""
     try:
-        from ..retarget import fbx_bridge
+        from ..retarget import skeleton_detect
 
-        result = fbx_bridge.detect_skeleton_preset(arm_obj)
+        result = skeleton_detect.detect_skeleton_preset(arm_obj)
         return result or "unknown"
     except Exception:
         return "unknown"

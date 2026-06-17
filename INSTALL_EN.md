@@ -44,7 +44,7 @@ the add-on's **venv path** preference and live in one folder — delete it to fu
 Command line:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File kimodo_motion\installer\install.ps1 -Proxy http://127.0.0.1:7890 -Mirror hf-mirror
+powershell -ExecutionPolicy Bypass -File installer\install.ps1 -Proxy http://127.0.0.1:7890 -Mirror hf-mirror
 ```
 
 Double-click launcher: `installer\install.cmd`.
@@ -63,7 +63,7 @@ Double-click launcher: `installer\install.cmd`.
 
 ```bash
 cd /path/to/kimodo_motion
-KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash kimodo_motion/installer/install_mac.sh
+KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
 ```
 
 Then set the add-on's **venv path** preference to `<repo>/.kimodo-runtime/venv` — the venv, logs,

@@ -41,7 +41,7 @@ venv、日志、模型缓存都锚定到插件偏好里的 **venv 路径**，集
 命令行等价：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File kimodo_motion\installer\install.ps1 -Proxy http://127.0.0.1:7890 -Mirror hf-mirror
+powershell -ExecutionPolicy Bypass -File installer\install.ps1 -Proxy http://127.0.0.1:7890 -Mirror hf-mirror
 ```
 
 双击启动：`installer\install.cmd`（英文名 + chcp 65001，中文路径/用户名不乱码）。
@@ -60,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File kimodo_motion\installer\install.ps1 -Pr
 
 ```bash
 cd /path/to/kimodo_motion
-KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash kimodo_motion/installer/install_mac.sh
+KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
 ```
 
 装好后把插件偏好里的 **venv 路径**设为 `<repo>/.kimodo-runtime/venv` —— venv、日志、**以及 ~17GB 模型缓存**都会落在 `<repo>/.kimodo-runtime/` 里。
