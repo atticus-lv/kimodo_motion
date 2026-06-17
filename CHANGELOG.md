@@ -23,7 +23,7 @@ on-device install + generation.
   with pypi.org as fallback index), kimodo (MPS fork by default), FastAPI server
   deps. No fbxsdkpy. Options via `KIMODO_VENV` / `KIMODO_PIP_MIRROR` / `KIMODO_PROXY`
   / `KIMODO_GIT_URL` / `KIMODO_HF_HOME`.
-- `INSTALL_MAC.md` — macOS install guide (project-contained install, uninstall = delete one folder).
+- macOS install steps folded into the unified `INSTALL.md` / `INSTALL_EN.md` (project-contained install; uninstall = delete one folder).
 
 ### Changed
 - `ui/operators.py` — `_retarget_and_apply` now calls `bpy_retarget.retarget_sample`
