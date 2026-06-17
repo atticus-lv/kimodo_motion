@@ -155,10 +155,28 @@ log INFO "fbxsdkpy is intentionally NOT installed on macOS — retarget runs ins
 if "$VPY" -c 'import kimodo' >/dev/null 2>&1; then
     log OK "kimodo $("$VPY" -c 'import kimodo; print(getattr(kimodo,"__version__","unknown"))' 2>/dev/null) already installed — skip"
 else
-    log INFO "Installing kimodo from $KIMODO_GIT_URL (this takes a while)…"
-    "$VPY" -m pip install "kimodo @ git+${KIMODO_GIT_URL}" \
-        --index-url "$PIP_INDEX" --retries 5 --timeout 180 \
-        || die "kimodo install failed"
+    # SKIP_MOTION_CORRECTION_IN_SETUP=1: kimodo's optional C++ motion-correction
+    # extension is x86-SSE only and won't compile on arm64; skip it (kimodo falls back
+    # to the pure-Python postprocessing path). Honored by upstream + fork setup.py.
+    # KIMODO_GIT_URL may be a local directory (e.g. a working copy with MPS support):
+    # install it as a path; otherwise treat it as a git URL.
+    if [ -d "$KIMODO_GIT_URL" ]; then
+        log INFO "Installing kimodo from local path $KIMODO_GIT_URL …"
+        SKIP_MOTION_CORRECTION_IN_SETUP=1 "$VPY" -m pip install "$KIMODO_GIT_URL" \
+            --index-url "$PIP_INDEX" --retries 5 --timeout 180 \
+            || die "kimodo install failed"
+    else
+        log INFO "Installing kimodo from $KIMODO_GIT_URL (this takes a while)…"
+        SKIP_MOTION_CORRECTION_IN_SETUP=1 "$VPY" -m pip install "kimodo @ git+${KIMODO_GIT_URL}" \
+            --index-url "$PIP_INDEX" --retries 5 --timeout 180 \
+            || die "kimodo install failed"
+    fi
+fi
+# Sanity: warn loudly if the installed kimodo lacks the MPS backend (e.g. the remote
+# fork was not pushed) — generation would silently fall back to CPU.
+if ! "$VPY" -c 'import kimodo.device_utils' >/dev/null 2>&1; then
+    log WARN "Installed kimodo has no device_utils (MPS backend) — it will run on CPU."
+    log WARN "Use a kimodo with MPS support: set KIMODO_GIT_URL to your MPS fork/branch or a local path."
 fi
 "$VPY" -m pip install scipy fastapi "uvicorn[standard]" pydantic bvhio requests \
     --index-url "$PIP_INDEX" --retries 5 --timeout 60 \

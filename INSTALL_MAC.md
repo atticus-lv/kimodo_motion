@@ -44,7 +44,7 @@ KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash kimodo_motion/installer/install_m
 | `KIMODO_VENV` | venv 目标路径(运行时/模型缓存放它旁边) | `~/.kimodo_venv` |
 | `KIMODO_PIP_MIRROR` | `auto` / `pypi` / `tsinghua` / `aliyun` | `auto` |
 | `KIMODO_PROXY` | HTTP(S) 代理,如 `http://127.0.0.1:7890` | 空 |
-| `KIMODO_GIT_URL` | kimodo git 源(含 MPS 后端的 fork) | `https://github.com/atticus-lv/kimodo.git` |
+| `KIMODO_GIT_URL` | kimodo git 源**或本地目录**(须含 MPS 后端) | `https://github.com/atticus-lv/kimodo.git` |
 | `KIMODO_HF_HOME` | 模型缓存位置(覆盖默认的 venv 旁) | `<venv 父目录>/hf-cache` |
 | `KIMODO_SKIP_TORCH` | `1` 跳过 torch(仅开发调试) | `0` |
 
