@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Proxy http://127.0.0.1:789
 
 | 组件 | 许可 | 分发方式 |
 |------|------|----------|
-| kimodo_motion 插件 | MIT | 打包到 zip |
+| kimodo_motion 插件 | GPL-3.0-or-later | 打包到扩展 |
 | kimodo (nv-tlabs) | Apache 2.0 | `pip install git+...` |
 | Kimodo-SOMA-RP-v1 | NVIDIA Open Model License | HF 自动下 |
 | meta-llama 3-8B | LLaMA-3 Community License（gated） | 用户自己申请 |

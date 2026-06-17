@@ -13,10 +13,10 @@ tags = ["Animation", "Rigging", "Pipeline"]
 
 blender_version_min = "5.0.0"
 
-# Plugin code is MIT. The runtime it installs (kimodo, PyTorch, Llama-3-8B
-# weights) is fetched per-machine from its original sources and is NOT bundled —
-# see README "License boundary".
-license = ["SPDX:MIT"]
+# Plugin code is GPL-3.0-or-later (Blender add-on compatible). The runtime it
+# installs (kimodo, PyTorch, Llama-3-8B weights) is fetched per-machine from its
+# original sources and is NOT bundled — see README "License boundary".
+license = ["SPDX:GPL-3.0-or-later"]
 
 copyright = [
   "2026 Xingxun",
