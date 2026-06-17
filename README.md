@@ -114,8 +114,9 @@ The installer never bundles fbxsdkpy or model weights. Each user's machine pulls
 - [x] Multi-sample Actions (N variants per prompt)
 - [x] Translation API bridge (DeepSeek / OpenRouter / Moonshot / OpenAI-compatible)
 - [x] Chinese / English UI
-- [ ] Linux support (Python 3.12 venv should already work; untested)
-- [ ] macOS (blocked on fbxsdkpy cp312 arm64 wheel — not available upstream)
+- [x] **macOS / Apple Silicon (Metal/MPS)** — in-Blender retarget, no fbxsdkpy needed (beta; see [INSTALL_MAC.md](./INSTALL_MAC.md))
+- [ ] Full 3-axis rest-pose matching for A-pose rigs (T-pose already works)
+- [ ] Linux support (venv should already work; untested)
 - [ ] Per-viewport live preview during retarget
 - [ ] NLA push-to-track toggle
 

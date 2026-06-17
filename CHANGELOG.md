@@ -5,6 +5,50 @@ All notable changes to the **Blender Kimodo Motion** addon.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — macOS / Apple Silicon (Metal/MPS) support
+
+Brings the addon to macOS by removing the Autodesk FBX SDK dependency and routing
+inference through Metal/MPS. The retarget core is validated on local Blender against
+real Mixamo rigs + real Kimodo NPZ; full server-on-MPS end-to-end is pending a first
+on-device install + generation.
+
+### Added
+- `retarget/bpy_retarget.py` — in-Blender retarget driven directly from the NPZ
+  (bpy + numpy + mathutils). No Autodesk FBX SDK, no venv subprocess; works on
+  Apple Silicon. Ports the validated rest-delta rotation retarget (SOMA Y-up →
+  Blender Z-up basis fix; off = target rest; root trajectory scaled by body-bone
+  height ratio, anchored to the first frame). One named Action per sample.
+- `installer/install_mac.sh` — macOS one-click runtime installer: locate Python
+  3.10–3.13, create the venv, install PyTorch (PyPI arm64 wheels ship Metal/MPS,
+  with pypi.org as fallback index), kimodo (MPS fork by default), FastAPI server
+  deps. No fbxsdkpy. Options via `KIMODO_VENV` / `KIMODO_PIP_MIRROR` / `KIMODO_PROXY`
+  / `KIMODO_GIT_URL` / `KIMODO_HF_HOME`.
+- `INSTALL_MAC.md` — macOS install guide (project-contained install, uninstall = delete one folder).
+
+### Changed
+- `ui/operators.py` — `_retarget_and_apply` now calls `bpy_retarget.retarget_sample`
+  per sample instead of export-FBX → fbxsdkpy subprocess → re-import.
+- `server_app/main.py` — device is resolved (auto → cuda > mps > cpu) via the kimodo
+  fork's `device_utils`, no longer hardcoded `cuda`; override with `KIMODO_DEVICE`.
+- `ui/install_panel.py` — install / download-model / open-log operators branch per
+  platform (Terminal via osascript on macOS); precheck runs in the venv on macOS too
+  (was hardcoded `Scripts/python.exe`); status rows are platform-aware (Apple/Metal +
+  MPS; "FBX retarget: built-in" on macOS).
+- `installer/precheck.py` — reports torch MPS availability alongside CUDA.
+- `server/manager.py` — launches the server with `HF_HOME` next to the venv so the
+  ~17GB model cache stays in the runtime folder, not `~/.cache/huggingface`.
+
+### Review fixes (high-effort review of the macOS diff)
+- Retarget height-scale measured over **mapped body bones only** (control/IK/hair
+  helpers no longer skew the root-motion scale).
+- Regenerating a prompt **replaces** the same-named Action instead of leaving
+  `use_fake_user` `.001` orphans.
+- One `view_layer.update()` per frame instead of per bone (≈22× fewer depsgraph
+  evaluations); FK output unchanged.
+- `sample_index` clamped to the NPZ batch size (was an opaque numpy IndexError) —
+  found during local Blender verification of the operator path.
+- Warnings when `Hips` is missing/unmapped (previously silent no-root-motion).
+
 ## [0.1.0] — 2026-04-17
 
 First public release. Complete end-to-end path verified (clean-machine install → Kimodo server → 51.4 s /generate → FBX-SDK retarget → 127 KB valid FBX output → Blender Action applied).
