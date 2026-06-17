@@ -1,5 +1,6 @@
 """Kimodo Motion UI panels."""
 
+import threading
 import time
 
 import bpy
@@ -9,20 +10,61 @@ from ..preferences import get_prefs, get_server_url
 from ..server.client import KimodoClient
 
 
-# Cache the full /health dict ({status, model_loaded}) so draw() makes at most one
-# HTTP call every few seconds and both the online state and the model-loaded toggle
-# read from the same probe.
+# Server status cache (full /health dict: {status, model_loaded}). Refreshed on a
+# BACKGROUND THREAD — never from draw(). draw() must stay non-blocking: a synchronous
+# HTTP call there blocks the main thread on every redraw and makes the whole Blender
+# UI stutter. draw() reads the last cached value instantly; a stale cache kicks off an
+# async refresh that tags the View3D for redraw when it lands.
 _status_cache = None
 _status_time = 0.0
+_status_lock = threading.Lock()
+_status_refreshing = False
+_STATUS_MAX_AGE = 4.0
+
+
+def _tag_view3d_redraw() -> None:
+    wm = bpy.context.window_manager
+    if not wm:
+        return None
+    for window in wm.windows:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+    return None  # used as a one-shot bpy.app.timer; returning None unregisters it
+
+
+def _refresh_status_async(url: str) -> None:
+    global _status_refreshing
+    with _status_lock:
+        if _status_refreshing:
+            return
+        _status_refreshing = True
+
+    def _worker() -> None:
+        global _status_cache, _status_time, _status_refreshing
+        result = KimodoClient(url).status(timeout=2.0)
+        with _status_lock:
+            _status_cache = result
+            _status_time = time.time()
+            _status_refreshing = False
+        # Hop back to the main thread to request the redraw (never touch bpy here).
+        try:
+            bpy.app.timers.register(_tag_view3d_redraw, first_interval=0.01)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _cached_status(url: str) -> dict | None:
-    global _status_cache, _status_time
-    now = time.time()
-    if now - _status_time > 3.0:
-        _status_cache = KimodoClient(url).status(timeout=2.0)
-        _status_time = now
-    return _status_cache
+    """Return the last known /health dict immediately (may be stale/None); refresh
+    in the background if the cache has aged out. NEVER blocks the draw thread."""
+    with _status_lock:
+        age = time.time() - _status_time
+        cache = _status_cache
+    if age > _STATUS_MAX_AGE:
+        _refresh_status_async(url)
+    return cache
 
 
 def _detect_preset(arm_obj) -> str:
