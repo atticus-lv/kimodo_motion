@@ -91,7 +91,7 @@ def _run_precheck_sync() -> dict[str, Any]:
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
         p = subprocess.run(
-            [interp, str(precheck)],
+            [interp, str(precheck), "--venv", venv_path],
             capture_output=True,
             text=True,
             timeout=45,

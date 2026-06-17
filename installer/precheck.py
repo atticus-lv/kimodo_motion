@@ -242,34 +242,62 @@ def _check_hf_repo_integrity(repo_dir: Path) -> tuple[bool, int]:
     return (has_refs and has_snap), total
 
 
-def _hf_model_cached() -> tuple[bool, float]:
-    """Check if the Kimodo SOMA model has been downloaded to HF cache.
+def _hf_hub_candidates(venv_dir: Path) -> list[Path]:
+    """HF 'hub' dirs to search, in priority order.
+
+    The runtime's model cache is NOT always ~/.cache/huggingface: the installer
+    (install_mac.sh) and server/manager.py co-locate it with the venv as
+    ``<venv-parent>/hf-cache`` so the whole runtime lives in one folder. Mirror
+    that here so a user-specified venv_path resolves its real cache, while still
+    falling back to the default HF location.
+    """
+    cands: list[Path] = []
+    env_home = os.environ.get("KIMODO_HF_HOME")
+    if env_home:
+        cands.append(Path(env_home).expanduser() / "hub")
+    cands.append(venv_dir.parent / "hf-cache" / "hub")
+    cands.append(HF_CACHE / "hub")
+    seen: set[str] = set()
+    out: list[Path] = []
+    for c in cands:
+        key = str(c)
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
+
+
+def _hf_model_cached(hub_dirs: list[Path]) -> tuple[bool, float]:
+    """Check if the Kimodo SOMA model has been downloaded to any candidate HF cache.
 
     HuggingFace stores snapshots under:
-        ~/.cache/huggingface/hub/models--nvidia--Kimodo-SOMA-RP-v1/
+        <hub>/models--nvidia--Kimodo-SOMA-RP-v1/
     """
-    hf_hub = HF_CACHE / "hub"
-    if not hf_hub.is_dir():
-        return False, 0.0
-
     # Snapshot dir name convention: "models--{org}--{name}"
-    candidates = [
+    model_names = [
         f"models--{KIMODO_MODEL_REPO.replace('/', '--')}",
         # Also check v1.1
         "models--nvidia--Kimodo-SOMA-RP-v1.1",
     ]
+    # LLaMA-3-8B text encoder: the gated meta-llama repo OR the byte-identical
+    # ungated NousResearch mirror the installer falls back to.
+    llama_names = [
+        "models--meta-llama--Meta-Llama-3-8B-Instruct",
+        "models--NousResearch--Meta-Llama-3-8B-Instruct",
+    ]
     total_bytes = 0
     valid_found = False
-    for cand in candidates:
-        p = hf_hub / cand
-        valid, size = _check_hf_repo_integrity(p)
-        total_bytes += size
-        if valid:
-            valid_found = True
-    # Also account for LLaMA-3-8B (the gated text encoder)
-    llama_dir = hf_hub / "models--meta-llama--Meta-Llama-3-8B-Instruct"
-    _, llama_size = _check_hf_repo_integrity(llama_dir)
-    total_bytes += llama_size
+    for hf_hub in hub_dirs:
+        if not hf_hub.is_dir():
+            continue
+        for cand in model_names:
+            valid, size = _check_hf_repo_integrity(hf_hub / cand)
+            total_bytes += size
+            if valid:
+                valid_found = True
+        for cand in llama_names:
+            _, llama_size = _check_hf_repo_integrity(hf_hub / cand)
+            total_bytes += llama_size
     size_gb = round(total_bytes / (1024**3), 2)
     # "model_cached" means SOMA has valid refs + snapshots AND non-trivial size
     return (valid_found and size_gb > 0.5), size_gb
@@ -299,11 +327,14 @@ def _disk_free_gb(path: Path) -> float:
         return 0.0
 
 
-def run(probe_venv: bool = True) -> dict[str, Any]:
+def run(probe_venv: bool = True, venv_path: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
 
-    venv_py = _venv_python(DEFAULT_VENV)
+    # Honor the addon's "虚拟环境路径" preference (passed via --venv) so a
+    # user-specified / dev runtime is detected instead of the hardcoded default.
+    venv_dir = Path(venv_path).expanduser() if venv_path else DEFAULT_VENV
+    venv_py = _venv_python(venv_dir)
     venv_ready = venv_py is not None
 
     is_mac = sys.platform == "darwin"
@@ -350,7 +381,7 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
         if "_probe_error" in probe:
             warnings.append(f"venv probe: {probe['_probe_error']}")
 
-    cached, size_gb = _hf_model_cached()
+    cached, size_gb = _hf_model_cached(_hf_hub_candidates(venv_dir))
     kimodo_info["model_cached"] = cached
     kimodo_info["cache_size_gb"] = size_gb
 
@@ -361,7 +392,7 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
     # Only claim pytorch/fbxsdkpy/kimodo are missing when we actually probed —
     # with --no-venv-probe the defaults (null/False) mean "not checked", not "absent".
     if not venv_ready:
-        errors.append(f"venv not found: {DEFAULT_VENV}")
+        errors.append(f"venv not found: {venv_dir}")
     if venv_ready and probe_venv:
         if pytorch is None:
             errors.append("PyTorch not installed in venv")
@@ -379,7 +410,7 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
         # JSON contract, but its absence is not an error and must not gate next_action.
         if not kimodo_info["installed"]:
             errors.append("kimodo not installed")
-    if not hf["present"] and kimodo_info["installed"]:
+    if not hf["present"] and kimodo_info["installed"] and not kimodo_info["model_cached"]:
         warnings.append("HuggingFace token 未设置 — LLaMA-3-8B 是 gated model 必须登录")
     if disk_free < 30:
         warnings.append(f"磁盘剩余 {disk_free}GB < 30GB — 模型要 17GB+")
@@ -390,10 +421,10 @@ def run(probe_venv: bool = True) -> dict[str, Any]:
         next_action = "run_install"
     elif not kimodo_info["installed"]:
         next_action = "run_install"
-    elif not hf["present"]:
-        next_action = "login_hf"
     elif not kimodo_info["model_cached"]:
-        next_action = "download_model"
+        # Gated weights still missing: log in first if there's no token, else download.
+        # (Once the model is cached the token is irrelevant — don't nag for it.)
+        next_action = "login_hf" if not hf["present"] else "download_model"
     elif errors:
         next_action = "run_install"
     else:
@@ -420,8 +451,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("--no-venv-probe", action="store_true")
+    ap.add_argument("--venv", default=None, help="venv path to check (default ~/.kimodo_venv)")
     args = ap.parse_args()
-    result = run(probe_venv=not args.no_venv_probe)
+    result = run(probe_venv=not args.no_venv_probe, venv_path=args.venv)
     indent = 2 if args.pretty else None
     print(json.dumps(result, indent=indent, ensure_ascii=False))
     return 0
