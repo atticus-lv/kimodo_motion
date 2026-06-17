@@ -66,6 +66,10 @@ class GenerateRequest(BaseModel):
     output_bvh: bool = True
 
 
+class LoadRequest(BaseModel):
+    model: str = "Kimodo-SOMA-RP-v1"
+
+
 class GenerateResponse(BaseModel):
     bvh_path: str = ""
     npz_path: str = ""
@@ -98,6 +102,53 @@ def progress():
     return dict(_progress)
 
 
+def _load_model_sync(model_name: str) -> str:
+    """Load ``model_name`` into device memory if not already current. Returns the
+    resolved device string. Raises on failure. Shared by /load and /generate."""
+    global _model, _model_name, _load_time
+    if _model is not None and _model_name == model_name:
+        return str(getattr(_model, "device", "?"))
+
+    from kimodo import load_model
+
+    # Device resolution: prefer CUDA, then Apple Silicon MPS (Metal), then CPU.
+    # Uses the kimodo fork's device_utils when available (MPS support); falls
+    # back to a plain CUDA/CPU probe on upstream kimodo. Override with KIMODO_DEVICE.
+    requested = os.environ.get("KIMODO_DEVICE", "auto")
+    try:
+        from kimodo.device_utils import resolve_torch_device
+
+        device = resolve_torch_device(requested)
+    except Exception:
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[Kimodo] Loading model: {model_name} on device '{device}' ...")
+    t0 = time.time()
+    _model = load_model(model_name, device=device)
+    _model_name = model_name
+    _load_time = round(time.time() - t0, 1)
+    print(f"[Kimodo] Model loaded in {_load_time}s")
+    return device
+
+
+@app.post("/load")
+def load(req: LoadRequest):
+    """Eagerly load a model into memory so the next /generate skips the load wait."""
+    if _model is not None and _model_name == req.model:
+        return {"message": "already loaded", "model": _model_name,
+                "load_time": _load_time, "model_loaded": True}
+    _progress.update(running=True, phase="loading", step=0, total=0)
+    try:
+        device = _load_model_sync(req.model)
+    except Exception as e:
+        _progress.update(running=False, phase="idle")
+        raise HTTPException(status_code=500, detail=f"Model load failed: {e}")
+    _progress.update(running=False, phase="done")
+    return {"message": "loaded", "model": _model_name, "device": device,
+            "load_time": _load_time, "model_loaded": True}
+
+
 @app.post("/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest):
     global _model, _model_name, _load_time
@@ -109,26 +160,7 @@ def generate(req: GenerateRequest):
     # Lazy load model
     if _model is None or _model_name != req.model:
         try:
-            from kimodo import load_model
-
-            # Device resolution: prefer CUDA, then Apple Silicon MPS (Metal), then CPU.
-            # Uses the kimodo fork's device_utils when available (MPS support); falls
-            # back to a plain CUDA/CPU probe on upstream kimodo. Override with KIMODO_DEVICE.
-            requested = os.environ.get("KIMODO_DEVICE", "auto")
-            try:
-                from kimodo.device_utils import resolve_torch_device
-
-                device = resolve_torch_device(requested)
-            except Exception:
-                import torch
-
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"[Kimodo] Loading model: {req.model} on device '{device}' ...")
-            t0 = time.time()
-            _model = load_model(req.model, device=device)
-            _model_name = req.model
-            _load_time = round(time.time() - t0, 1)
-            print(f"[Kimodo] Model loaded in {_load_time}s")
+            _load_model_sync(req.model)
         except Exception as e:
             _progress.update(running=False, phase="idle")
             raise HTTPException(status_code=500, detail=f"Model load failed: {e}")

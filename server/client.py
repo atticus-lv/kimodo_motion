@@ -21,6 +21,13 @@ class KimodoClient:
         except Exception:
             return False
 
+    def status(self, timeout: float = 3.0) -> Optional[dict]:
+        """Full /health dict ({status, model_loaded}); None if unreachable."""
+        try:
+            return self._get("/health", timeout=timeout)
+        except Exception:
+            return None
+
     def version(self, timeout: float = 3.0) -> Optional[dict]:
         try:
             return self._get("/version", timeout=timeout)
@@ -70,7 +77,11 @@ class KimodoClient:
     def generate_status(self, job_id: str) -> dict:
         return self._get(f"/generate/status/{job_id}", timeout=5.0)
 
-    # ── VRAM Management ──
+    # ── Model memory management ──
+
+    def load_model(self, model: str = "Kimodo-SOMA-RP-v1", timeout: float = 600.0) -> dict:
+        """Eagerly load a model into device memory (first load ~40-60s)."""
+        return self._post("/load", {"model": model}, timeout=timeout)
 
     def unload_model(self) -> dict:
         return self._post("/unload", {}, timeout=30.0)
