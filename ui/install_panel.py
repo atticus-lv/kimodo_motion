@@ -491,16 +491,9 @@ class KIMODO_PT_install(Panel):
         else:
             _row("PyTorch", False, (pyt or {}).get("error", "未安装")[:40])
 
-        # fbxsdkpy is only needed by the legacy Windows FBX retarget path; on macOS
-        # retargeting runs inside Blender, so it is intentionally absent.
-        if is_mac:
-            _row("FBX retarget", True, "Blender 内置（macOS 无需 fbxsdkpy）")
-        else:
-            _row(
-                "fbxsdkpy (FBX SDK)",
-                pc.get("fbxsdkpy", {}).get("installed", False),
-                pc.get("fbxsdkpy", {}).get("version") or "未安装",
-            )
+        # Retargeting runs inside Blender on every platform now, so the Autodesk FBX
+        # SDK (fbxsdkpy) is never needed.
+        _row("FBX retarget", True, "Blender 内置（无需 fbxsdkpy）")
 
         km = pc.get("kimodo", {})
         _row("kimodo", km.get("installed", False), km.get("version") or "未安装")

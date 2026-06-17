@@ -7,12 +7,12 @@
       1. Detect / install Python 3.12
       2. Create ~/.kimodo_venv
       3. Auto-pick CUDA channel (cu128 for sm_89+, cu121 for older)
-      4. Install PyTorch, kimodo, fbxsdkpy (from INRIA gitlab), fastapi+uvicorn
+      4. Install PyTorch, kimodo, fastapi+uvicorn
       5. Run precheck.py for final verification
       6. Write log to ~/.kimodo_runtime/install.log
 
-    LICENSE NOTE: fbxsdkpy (Autodesk FBX SDK wrapper) is NEVER bundled.
-    It is pip-downloaded on demand from Inria's public PyPI registry.
+    NOTE: retargeting runs inside Blender (retarget/bpy_retarget.py), so the
+    Autodesk FBX SDK (fbxsdkpy) is no longer installed.
 
 .PARAMETER Proxy
     Optional HTTP/HTTPS proxy, e.g. http://127.0.0.1:7890 (Clash default).
@@ -23,7 +23,7 @@
 
 .PARAMETER PipMirror
     Pip mirror channel: pypi | tsinghua | aliyun. Default: auto-detect.
-    Does NOT apply to PyTorch channel (always uses official) or INRIA.
+    Does NOT apply to the PyTorch channel (always uses the official index).
 
 .PARAMETER SkipTorch
     Skip PyTorch install (only for dev iteration).
@@ -69,8 +69,6 @@ $LOG_PATH    = Join-Path $RUNTIME_DIR "install.log"
 $PYTHON_DIR  = Join-Path $RUNTIME_DIR "python"
 $PY_VER      = "3.12.8"
 $PY_INSTALLER_URL = "https://www.python.org/ftp/python/$PY_VER/python-$PY_VER-amd64.exe"
-$INRIA_INDEX = "https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple"
-$FBXSDKPY_VERSION = "2020.3.7.post1"   # Latest confirmed 2026-04-14
 
 # ─── Logging ──────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path $RUNTIME_DIR | Out-Null
@@ -229,7 +227,7 @@ Write-Log "Args: Proxy=$Proxy Mirror=$Mirror PipMirror=$PipMirror SkipTorch=$Ski
 Write-Log "Runtime dir: $RUNTIME_DIR"
 Write-Log "Venv path:   $VENV_PATH"
 
-# Warn on non-ASCII user profile paths. pip / setuptools / fbxsdkpy DLL load
+# Warn on non-ASCII user profile paths. pip / setuptools / wheel extraction
 # on Python 3.12 generally handles Unicode, but edge cases still occur.
 $profileBytes = [System.Text.Encoding]::UTF8.GetBytes($env:USERPROFILE)
 $hasNonAscii = $false
@@ -459,39 +457,11 @@ if (-not $SkipTorch) {
     Write-Log "[5/8] Skip PyTorch (--SkipTorch)" -Level WARN
 }
 
-# ─── Step 6: fbxsdkpy (INRIA) ─────────────────────────────────
-Invoke-Step "[6/8] Install fbxsdkpy from INRIA (LICENSE: Autodesk FBX LSA)" {
-    # INRIA pypi package `fbxsdkpy` installs as `import fbx` (Autodesk
-    # convention: ships fbx.pyd + FbxCommon.py). We must probe BOTH:
-    #   1. actual import works (not just dist-info residue)
-    #   2. version matches the pin (old dist-info + new expected → force reinstall)
-    $probeCode = "import fbx`nfrom importlib.metadata import version`nprint(version('fbxsdkpy'))"
-    $r = Invoke-Exe -File $VPy -CmdArgs @('-c', $probeCode)
-    $installedVer = if ($r.ExitCode -eq 0) { $r.Output.Trim() } else { "" }
-    if ($installedVer -eq $FBXSDKPY_VERSION) {
-        Write-Log "fbxsdkpy $installedVer already installed (import OK, version matches) — skip" -Level OK
-        return
-    }
-    if ($installedVer) {
-        Write-Log "fbxsdkpy $installedVer installed but pin is $FBXSDKPY_VERSION — reinstalling" -Level WARN
-    } elseif ($r.ExitCode -ne 0) {
-        Write-Log "fbxsdkpy metadata may exist but 'import fbx' failed — reinstalling" -Level WARN
-    }
-    Write-Log "fbxsdkpy is Autodesk-licensed — pulled directly from Inria (NOT bundled)" -Level WARN
-    # Pinned only: latest fallback had drifted to 2024+ wheels that broke retarget.
-    # Codex 场景 8 P1: 去掉 latest fallback.
-    & $VPip install "fbxsdkpy==$FBXSDKPY_VERSION" `
-        --index-url $script:PipIndex `
-        --extra-index-url $INRIA_INDEX `
-        --retries 5 --timeout 60
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "fbxsdkpy==$FBXSDKPY_VERSION 下载失败. 检查: INRIA GitLab 可达性 / 代理 / cp312 wheel" -Level ERROR
-        throw "fbxsdkpy install failed"
-    }
-}
+# Step 6 (fbxsdkpy) removed: retargeting now runs inside Blender
+# (retarget/bpy_retarget.py), so the Autodesk FBX SDK is no longer needed.
 
-# ─── Step 7: kimodo + server deps ─────────────────────────────
-Invoke-Step "[7/8] Install kimodo + server deps" {
+# ─── Step 6: kimodo + server deps ─────────────────────────────
+Invoke-Step "[6/8] Install kimodo + server deps" {
     # kimodo from git (pypi package name might not exist or be stale)
     $r = Invoke-Exe -File $VPy -CmdArgs @('-c', 'import kimodo; print(getattr(kimodo, "__version__", "unknown"))')
     if ($r.ExitCode -eq 0 -and $r.Output.Trim()) {
@@ -512,8 +482,8 @@ Invoke-Step "[7/8] Install kimodo + server deps" {
     if ($LASTEXITCODE -ne 0) { throw "server deps install failed" }
 }
 
-# ─── Step 8: Verify ───────────────────────────────────────────
-Invoke-Step "[8/8] Run precheck.py" {
+# ─── Step 7: Verify ───────────────────────────────────────────
+Invoke-Step "[7/8] Run precheck.py" {
     $addonRoot = Split-Path -Parent $PSScriptRoot  # kimodo_motion/
     $precheck = Join-Path $PSScriptRoot "precheck.py"
     if (-not (Test-Path $precheck)) {

@@ -101,7 +101,10 @@ def _sync_from_frames(self, context):
 
 
 class KimodoPreferences(AddonPreferences):
-    bl_idname = "kimodo_motion"
+    # Must equal the add-on's package name. As a submodule of the add-on root this
+    # module's __package__ is exactly that — works whether loaded as a legacy add-on
+    # ("kimodo_motion") or an extension ("bl_ext.<repo>.kimodo_motion").
+    bl_idname = __package__
 
     server_host: StringProperty(
         name="服务器地址",
@@ -293,7 +296,7 @@ class KimodoPreferences(AddonPreferences):
 
 
 def get_prefs() -> KimodoPreferences:
-    return bpy.context.preferences.addons["kimodo_motion"].preferences
+    return bpy.context.preferences.addons[__package__].preferences
 
 
 def get_server_url() -> str:

@@ -3,8 +3,8 @@
 client-side 实现，在 Blender 插件进程内运行，不依赖服务器。
 API key 保存在 Blender preferences，不离开本机。
 
-用法：
-    from kimodo_motion.translate import translate_if_needed
+用法（插件内部，相对导入）：
+    from ..translate import translate_if_needed
     final_en, note = translate_if_needed(prompt, mode="API", api_url=..., api_key=..., model=...)
 """
 
