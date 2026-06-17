@@ -24,8 +24,15 @@
 
 set -uo pipefail
 
-RUNTIME_DIR="$HOME/.kimodo_runtime"
-VENV_PATH="$HOME/.kimodo_venv"
+# Everything is anchored to the venv path so the whole runtime stays in one place
+# (delete that one folder to fully uninstall). KIMODO_VENV is passed by the Blender
+# install panel from the addon's venv_path preference; runtime/log and the HF model
+# cache are placed as SIBLINGS of the venv so nothing lands in ~/.cache or system dirs.
+VENV_PATH="${KIMODO_VENV:-$HOME/.kimodo_venv}"
+BASE_DIR="$(dirname "$VENV_PATH")"
+RUNTIME_DIR="${KIMODO_RUNTIME:-$BASE_DIR/runtime}"
+HF_CACHE="${KIMODO_HF_HOME:-$BASE_DIR/hf-cache}"
+export HF_HOME="$HF_CACHE"   # models download here at first generation, not ~/.cache
 LOG_PATH="$RUNTIME_DIR/install.log"
 PY_MIN_MINOR=10
 PY_MAX_MINOR=13

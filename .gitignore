@@ -28,6 +28,7 @@ Thumbs.db
 *.log
 .kimodo_runtime/
 .kimodo_venv/
+.kimodo-runtime/
 *.fbx.bak
 
 # Project-local research / notes (never ship)

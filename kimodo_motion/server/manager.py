@@ -61,6 +61,16 @@ def start_server(venv_path: str, host: str, port: int) -> bool:
     env["KIMODO_HOST"] = host
     env["KIMODO_PORT"] = str(port)
 
+    # Keep the large HuggingFace model cache (~17GB for LLaMA-3-8B) next to the venv so
+    # the whole runtime lives in one place and never lands in ~/.cache/huggingface. Set
+    # KIMODO_HF_HOME to override (e.g. to share a cache across projects).
+    hf_home = os.environ.get("KIMODO_HF_HOME") or os.path.join(
+        os.path.dirname(os.path.abspath(venv_path)), "hf-cache"
+    )
+    os.makedirs(hf_home, exist_ok=True)
+    env["HF_HOME"] = hf_home
+    env.setdefault("HF_HUB_CACHE", os.path.join(hf_home, "hub"))
+
     creationflags = 0
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NO_WINDOW

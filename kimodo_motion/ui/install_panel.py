@@ -242,8 +242,15 @@ class KIMODO_OT_install_runtime(Operator):
                 os.chmod(script, 0o755)
             except OSError:
                 pass
-            # Pass options to the script via env vars (cleaner than arg-quoting through osascript)
-            env_prefix = f"KIMODO_PIP_MIRROR={shlex.quote(self.pip_mirror)} "
+            # Pass options to the script via env vars (cleaner than arg-quoting through osascript).
+            # KIMODO_VENV anchors the install (venv + runtime + HF model cache) to the
+            # addon's venv_path preference, so everything stays in one chosen folder.
+            from ..preferences import get_prefs
+
+            env_prefix = (
+                f"KIMODO_VENV={shlex.quote(get_prefs().venv_path)} "
+                f"KIMODO_PIP_MIRROR={shlex.quote(self.pip_mirror)} "
+            )
             if self.proxy.strip():
                 env_prefix += f"KIMODO_PROXY={shlex.quote(self.proxy.strip())} "
             shell_cmd = (
