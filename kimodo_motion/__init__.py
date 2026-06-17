@@ -1,12 +1,5 @@
-bl_info = {
-    "name": "Kimodo Motion",
-    "author": "Xingxun",
-    "version": (0, 1, 0),
-    "blender": (5, 0, 0),
-    "location": "View3D > Sidebar > Kimodo",
-    "description": "NVIDIA Kimodo AI text-to-motion generation for Blender",
-    "category": "Animation",
-}
+# Blender Extension (4.2+): metadata lives in blender_manifest.toml, not bl_info.
+# Authors: Xingxun (original), Atticus (macOS / Metal port).
 
 import bpy
 

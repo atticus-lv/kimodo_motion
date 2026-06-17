@@ -1,0 +1,28 @@
+schema_version = "1.0.0"
+
+id = "kimodo_motion"
+version = "0.1.0"
+name = "Kimodo Motion"
+tagline = "NVIDIA Kimodo AI text-to-motion, retargeted to your rig"
+maintainer = "Xingxun, Atticus <lv3628800@gmail.com>"
+type = "add-on"
+
+website = "https://github.com/atticus-lv/blender-kimodo-motion-metal"
+
+tags = ["Animation", "Rigging", "Pipeline"]
+
+blender_version_min = "5.0.0"
+
+# Plugin code is MIT. The runtime it installs (kimodo, PyTorch, Llama-3-8B
+# weights) is fetched per-machine from its original sources and is NOT bundled —
+# see README "License boundary".
+license = ["SPDX:MIT"]
+
+copyright = [
+  "2026 Xingxun",
+  "2026 Atticus",
+]
+
+[permissions]
+network = "Download models and reach the local Kimodo inference server"
+files = "Manage the runtime venv, model cache, and generated motion"
