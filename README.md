@@ -53,7 +53,37 @@ Everything runs locally on your GPU — no cloud, no API keys (except the option
    Subsequent generations take 8–60 seconds depending on GPU.
 ```
 
-Detailed guide: [INSTALL.md](./INSTALL.md) (Chinese + English snippets).
+Detailed guide: [INSTALL.md](./INSTALL.md) (macOS: [INSTALL_MAC.md](./INSTALL_MAC.md)).
+
+## Text encoder model (LLaMA-3-8B)
+
+The LLM2Vec text encoder needs **Meta-Llama-3-8B-Instruct** as its base (~16GB). Two ways to get it:
+
+**1. Official (default, clean license).** `meta-llama/Meta-Llama-3-8B-Instruct` is gated by Meta — request access on the [model page](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct), then `hf auth login`. Downloaded automatically on first generation.
+
+**2. Dev shortcut (ungated mirror, no request/login).** `NousResearch/Meta-Llama-3-8B-Instruct` is a byte-identical re-upload. Download it and point the LLM2Vec adapters' base at it:
+
+```bash
+export HF_HOME="<sibling of venv>/hf-cache"   # same cache the server reads (next to the venv)
+HF="<venv>/bin/hf"
+"$HF" download NousResearch/Meta-Llama-3-8B-Instruct --exclude "original/*"
+python - <<'PY'
+import os, json, glob
+hub = os.path.join(os.environ["HF_HOME"], "hub")
+for repo in ("models--McGill-NLP--LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+             "models--McGill-NLP--LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised"):
+    for cfg in glob.glob(os.path.join(hub, repo, "snapshots", "*", "adapter_config.json")):
+        d = json.load(open(os.path.realpath(cfg)))
+        if d.get("base_model_name_or_path") == "meta-llama/Meta-Llama-3-8B-Instruct":
+            d["base_model_name_or_path"] = "NousResearch/Meta-Llama-3-8B-Instruct"
+            if os.path.islink(cfg):
+                os.unlink(cfg)
+            json.dump(d, open(cfg, "w"), indent=2)
+            print("patched", repo)
+PY
+```
+
+> ⚠️ The weights are still governed by the **Meta Llama-3 Community License** regardless of download source. The mirror is a **dev convenience**; ship/distribute via the official gated channel. The macOS/Metal end-to-end run was validated with option 2.
 
 ## Usage
 
