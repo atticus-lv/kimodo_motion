@@ -155,10 +155,19 @@ def generate(req: GenerateRequest):
 
     # Translation happens client-side (Blender plugin); server gets English prompt as-is.
 
-    _progress.update(running=True, phase="loading", step=0, total=req.diffusion_steps)
+    # Only report a "loading" phase when the model actually has to be loaded. A warm
+    # model (already in memory from a prior /load or /generate) goes straight to
+    # "sampling" so the panel doesn't flash "加载模型到设备…" on every generation.
+    needs_load = _model is None or _model_name != req.model
+    _progress.update(
+        running=True,
+        phase="loading" if needs_load else "sampling",
+        step=0,
+        total=req.diffusion_steps,
+    )
 
     # Lazy load model
-    if _model is None or _model_name != req.model:
+    if needs_load:
         try:
             _load_model_sync(req.model)
         except Exception as e:
