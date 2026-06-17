@@ -142,19 +142,6 @@ class KimodoPreferences(AddonPreferences):
         default="Kimodo-SOMA-RP-v1",
         description="Kimodo 模型变体",
     )
-    vram_mode: EnumProperty(
-        name="显存模式",
-        items=[
-            ("WARM", "常驻（保持加载）", "模型留在显存中，加速下次生成"),
-            (
-                "COLD",
-                "卸载（生成后释放）",
-                "生成后卸载模型，释放显存",
-            ),
-        ],
-        default="WARM",
-        description="显存管理策略",
-    )
     fbx_retarget_timeout: IntProperty(
         name="重定向超时（秒）",
         default=60,
@@ -256,7 +243,6 @@ class KimodoPreferences(AddonPreferences):
         box = layout.box()
         box.label(text="生成设置", icon="ARMATURE_DATA")
         box.prop(self, "model_name")
-        box.prop(self, "vram_mode")
 
         box = layout.box()
         box.label(text="重定向设置", icon="CON_ARMATURE")

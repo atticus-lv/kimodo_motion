@@ -6,20 +6,23 @@ import bpy
 from bpy.types import Panel
 
 from ..preferences import get_prefs, get_server_url
-from ..server import manager
+from ..server.client import KimodoClient
 
 
-_server_status_cache = False
-_server_status_time = 0.0
+# Cache the full /health dict ({status, model_loaded}) so draw() makes at most one
+# HTTP call every few seconds and both the online state and the model-loaded toggle
+# read from the same probe.
+_status_cache = None
+_status_time = 0.0
 
 
-def _cached_server_alive(url: str) -> bool:
-    global _server_status_cache, _server_status_time
+def _cached_status(url: str) -> dict | None:
+    global _status_cache, _status_time
     now = time.time()
-    if now - _server_status_time > 5.0:
-        _server_status_cache = manager.is_server_running(url)
-        _server_status_time = now
-    return _server_status_cache
+    if now - _status_time > 3.0:
+        _status_cache = KimodoClient(url).status(timeout=2.0)
+        _status_time = now
+    return _status_cache
 
 
 def _detect_preset(arm_obj) -> str:
@@ -45,13 +48,25 @@ class KIMODO_PT_main(Panel):
         scene = context.scene
 
         # ── Server status ──
+        from .operators import GEN_PROGRESS
+
         url = get_server_url()
-        server_alive = _cached_server_alive(url)
+        status = _cached_status(url)
+        server_alive = bool(status and status.get("status") == "ok")
         box = layout.box()
         row = box.row()
         if server_alive:
             row.label(text="服务器: 在线", icon="CHECKMARK")
             row.operator("kimodo.stop_server", text="", icon="CANCEL")
+            # ── Model load/unload toggle (manual, below the online row) ──
+            trow = box.row()
+            if GEN_PROGRESS.get("running") and GEN_PROGRESS.get("phase") == "loading":
+                trow.enabled = False
+                trow.label(text="模型加载中…", icon="SORTTIME")
+            elif status.get("model_loaded"):
+                trow.operator("kimodo.unload_model", text="卸载模型", icon="TRASH")
+            else:
+                trow.operator("kimodo.load_model", text="加载模型进内存", icon="IMPORT")
         else:
             row.label(text="服务器: 离线", icon="ERROR")
             row.operator("kimodo.start_server", text="", icon="PLAY")
@@ -104,8 +119,6 @@ class KIMODO_PT_main(Panel):
         box.prop(scene, "kimodo_seed")
 
         # ── Generate: progress bar while running, button otherwise ──
-        from .operators import GEN_PROGRESS
-
         if GEN_PROGRESS.get("running"):
             phase = GEN_PROGRESS.get("phase", "")
             step = GEN_PROGRESS.get("step", 0) or 0
@@ -182,22 +195,7 @@ class KIMODO_PT_actions(Panel):
             op_del.action_name = action.name
 
 
-class KIMODO_PT_tools(Panel):
-    bl_label = "工具"
-    bl_idname = "KIMODO_PT_tools"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Kimodo"
-    bl_parent_id = "KIMODO_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("kimodo.unload_model", icon="TRASH")
-
-
 classes = [
     KIMODO_PT_main,
     KIMODO_PT_actions,
-    KIMODO_PT_tools,
 ]
