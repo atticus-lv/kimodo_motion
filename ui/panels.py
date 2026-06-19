@@ -255,7 +255,96 @@ class KIMODO_PT_actions(Panel):
             op_del.action_name = action.name
 
 
+class KIMODO_PT_constraints(Panel):
+    bl_label = "路径与官方约束"
+    bl_idname = "KIMODO_PT_constraints"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Kimodo"
+    bl_parent_id = "KIMODO_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        box = layout.box()
+        box.prop(scene, "kimodo_enable_constraints")
+        row = box.row(align=True)
+        row.prop(scene, "kimodo_action_start_frame")
+        row.prop(scene, "kimodo_auto_canonicalize", text="规范原点")
+        row = box.row(align=True)
+        row.prop(scene, "kimodo_post_processing")
+        row.prop(scene, "kimodo_root_margin")
+        row = box.row(align=True)
+        row.prop(scene, "kimodo_text_cfg")
+        row.prop(scene, "kimodo_constraint_cfg")
+
+        box = layout.box()
+        box.label(text="曲线路径", icon="CURVE_BEZCURVE")
+        box.prop(scene, "kimodo_path_curve")
+        row = box.row(align=True)
+        row.prop(scene, "kimodo_path_waypoints")
+        row.prop(scene, "kimodo_path_start_frame")
+        row.prop(scene, "kimodo_path_end_frame")
+        box.operator("kimodo.sample_curve_as_waypoints", icon="IPO_BEZIER")
+
+        box = layout.box()
+        row = box.row(align=True)
+        row.label(text=f"约束标记 ({len(scene.kimodo_motion_constraints)})", icon="EMPTY_ARROWS")
+        row.operator("kimodo.preview_constraints_json", text="", icon="TEXT")
+        row.operator("kimodo.clear_constraints", text="", icon="TRASH")
+        quick = box.row(align=True)
+        for ctype, label in (
+            ("root2d", "Root"),
+            ("left_hand", "L.Hand"),
+            ("right_hand", "R.Hand"),
+            ("left_foot", "L.Foot"),
+            ("right_foot", "R.Foot"),
+        ):
+            op = quick.operator("kimodo.add_constraint_marker", text=label)
+            op.constraint_type = ctype
+        box.operator("kimodo.create_soma_proxy", icon="ARMATURE_DATA")
+
+        for idx, item in enumerate(scene.kimodo_motion_constraints):
+            row = box.row(align=True)
+            row.prop(item, "enabled", text="")
+            row.prop(item, "constraint_type", text="")
+            row.prop(item, "frame", text="")
+            row.prop(item, "marker_object", text="")
+            if item.constraint_type == "root2d":
+                row.prop(item, "include_heading", text="")
+
+
+class KIMODO_PT_segments(Panel):
+    bl_label = "多段动作"
+    bl_idname = "KIMODO_PT_segments"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Kimodo"
+    bl_parent_id = "KIMODO_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        row = layout.row(align=True)
+        row.operator("kimodo.add_motion_segment", icon="ADD")
+        row.operator("kimodo.clear_motion_segments", text="", icon="TRASH")
+        layout.prop(scene, "kimodo_num_transition_frames")
+        for seg in scene.kimodo_motion_segments:
+            box = layout.box()
+            row = box.row(align=True)
+            row.prop(seg, "enabled", text="")
+            row.prop(seg, "start_frame")
+            row.prop(seg, "end_frame")
+            box.prop(seg, "prompt", text="")
+            box.prop(seg, "seed")
+
+
 classes = [
     KIMODO_PT_main,
+    KIMODO_PT_constraints,
+    KIMODO_PT_segments,
     KIMODO_PT_actions,
 ]

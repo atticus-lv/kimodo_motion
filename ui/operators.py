@@ -2,6 +2,7 @@
 
 import logging
 import os
+import json
 import threading
 
 import bpy
@@ -169,6 +170,11 @@ class KIMODO_OT_generate(Operator):
     _target_arm_name: str = ""
     _prompt: str = ""
     _num_samples: int = 1
+    _constraints: list = []
+    _root_anchor_world = None
+    _root_scale = None
+    _action_start_frame: int = 0
+    _segments: list = []
 
     @classmethod
     def poll(cls, context):
@@ -217,12 +223,91 @@ class KIMODO_OT_generate(Operator):
         else:
             scene.kimodo_translation_note = ""
 
+        segments_payload = []
+        enabled_segments = sorted(
+            [seg for seg in scene.kimodo_motion_segments if seg.enabled],
+            key=lambda seg: int(seg.start_frame),
+        )
+        if enabled_segments:
+            translated_prompts = []
+            expected_start = int(enabled_segments[0].start_frame)
+            for seg in enabled_segments:
+                start_frame = int(seg.start_frame)
+                end_frame = int(seg.end_frame)
+                if start_frame != expected_start:
+                    self.report(
+                        {"ERROR"},
+                        f"多段动作必须连续: '{seg.prompt}' 应从第 {expected_start} 帧开始",
+                    )
+                    return {"CANCELLED"}
+                frames = end_frame - start_frame + 1
+                if frames < 59 or frames > 299:
+                    self.report({"ERROR"}, f"分段帧数需为 59-299: {seg.prompt}")
+                    return {"CANCELLED"}
+                seg_prompt, _seg_note = translate_if_needed(
+                    seg.prompt,
+                    mode=prefs.translate_mode,
+                    api_url=prefs.translate_api_url,
+                    api_key=prefs.translate_api_key,
+                    model=prefs.translate_model,
+                    timeout=float(prefs.translate_timeout),
+                )
+                translated_prompts.append(seg_prompt)
+                segments_payload.append({"prompt": seg_prompt, "num_frames": frames})
+                expected_start = end_frame + 1
+            final_prompt = " | ".join(translated_prompts)
+
+        constraint_payload = []
+        root_anchor_world = None
+        root_scale = None
+        action_start_frame = (
+            int(enabled_segments[0].start_frame)
+            if enabled_segments
+            else int(scene.kimodo_action_start_frame)
+        )
+        if scene.kimodo_enable_constraints and scene.kimodo_motion_constraints:
+            try:
+                from ..retarget import constraints as kimodo_constraints
+                from ..retarget.mapping import load_preset
+                from ..retarget import skeleton_detect
+
+                ui_preset = scene.kimodo_retarget_preset
+                preset_name = (
+                    skeleton_detect.detect_skeleton_preset(target_arm)
+                    if ui_preset == "AUTO"
+                    else ui_preset
+                ) or "mixamo"
+                build = kimodo_constraints.build_constraints_json(
+                    scene.kimodo_motion_constraints,
+                    scene,
+                    target_arm=target_arm,
+                    bone_mapping=load_preset(preset_name),
+                    action_start_frame=action_start_frame,
+                    auto_canonicalize=bool(scene.kimodo_auto_canonicalize),
+                )
+                constraint_payload = build.constraints
+                if constraint_payload:
+                    root_anchor_world = tuple(build.anchor_world) if build.anchor_world else None
+                    root_scale = float(build.root_scale)
+                    scene.kimodo_constraint_json_preview = json.dumps(
+                        constraint_payload,
+                        indent=2,
+                    )
+            except Exception as e:
+                self.report({"ERROR"}, f"约束构建失败: {e}")
+                return {"CANCELLED"}
+
         cls = KIMODO_OT_generate
         cls._result = None
         cls._error = None
         cls._target_arm_name = target_arm.name
         cls._prompt = final_prompt  # used later for Action naming
         cls._num_samples = int(scene.kimodo_num_samples)
+        cls._constraints = constraint_payload
+        cls._root_anchor_world = root_anchor_world
+        cls._root_scale = root_scale
+        cls._action_start_frame = action_start_frame
+        cls._segments = segments_payload
 
         cls._thread = threading.Thread(
             target=cls._run_generation,
@@ -235,6 +320,13 @@ class KIMODO_OT_generate(Operator):
                 int(scene.kimodo_num_samples),
                 int(scene.kimodo_seed),
                 int(scene.kimodo_diffusion_steps),
+                constraint_payload,
+                bool(scene.kimodo_post_processing and constraint_payload),
+                float(scene.kimodo_text_cfg),
+                float(scene.kimodo_constraint_cfg),
+                int(scene.kimodo_num_transition_frames),
+                float(scene.kimodo_root_margin),
+                segments_payload,
             ),
             daemon=True,
         )
@@ -303,8 +395,16 @@ class KIMODO_OT_generate(Operator):
             return {"CANCELLED"}
 
         try:
+            num_samples = int(cls._result.get("num_samples") or cls._num_samples)
             actions = self._retarget_and_apply(
-                context, target_arm, npz_path, cls._prompt, cls._num_samples
+                context,
+                target_arm,
+                npz_path,
+                cls._prompt,
+                num_samples,
+                action_start_frame=cls._action_start_frame,
+                root_anchor_world=cls._root_anchor_world,
+                root_scale=cls._root_scale,
             )
         except Exception as e:
             import traceback
@@ -331,6 +431,8 @@ class KIMODO_OT_generate(Operator):
             if len(actions) > 1
             else f"完成: Action '{first_action.name}' 已应用到 {target_arm.name}"
         )
+        for warning in cls._result.get("warnings") or []:
+            self.report({"WARNING"}, str(warning))
         self.report({"INFO"}, msg)
         return {"FINISHED"}
 
@@ -342,7 +444,21 @@ class KIMODO_OT_generate(Operator):
 
     @staticmethod
     def _run_generation(
-        url, prompt, duration, num_frames, model, num_samples, seed, steps
+        url,
+        prompt,
+        duration,
+        num_frames,
+        model,
+        num_samples,
+        seed,
+        steps,
+        constraints,
+        post_processing,
+        text_cfg,
+        constraint_cfg,
+        num_transition_frames,
+        root_margin,
+        segments,
     ):
         """Background thread — NO bpy access here."""
         client = KimodoClient(url)
@@ -356,12 +472,28 @@ class KIMODO_OT_generate(Operator):
                 seed=seed,
                 diffusion_steps=steps,
                 output_bvh=False,
+                constraints=constraints,
+                post_processing=post_processing,
+                text_cfg=text_cfg,
+                constraint_cfg=constraint_cfg,
+                num_transition_frames=num_transition_frames,
+                root_margin=root_margin,
+                segments=segments,
             )
         except Exception as e:
             KIMODO_OT_generate._error = str(e)
 
     @staticmethod
-    def _retarget_and_apply(context, target_arm, npz_path, prompt, num_samples):
+    def _retarget_and_apply(
+        context,
+        target_arm,
+        npz_path,
+        prompt,
+        num_samples,
+        action_start_frame=0,
+        root_anchor_world=None,
+        root_scale=None,
+    ):
         """Run retarget loop: in-Blender bpy retarget → N Actions on target_arm.
 
         Cross-platform (incl. Apple Silicon / Metal): no Autodesk FBX SDK and no venv
@@ -402,6 +534,9 @@ class KIMODO_OT_generate(Operator):
                 sample_index=i,
                 action_name=action_name,
                 with_root=True,
+                action_start_frame=action_start_frame,
+                root_anchor_world=root_anchor_world,
+                root_scale=root_scale,
             )
             created_actions.append(action)
 
@@ -410,6 +545,229 @@ class KIMODO_OT_generate(Operator):
             target_arm.animation_data.action = created_actions[0]
 
         return created_actions
+
+
+# ── Constraint authoring ──
+
+
+def _unique_object_name(base: str) -> str:
+    if base not in bpy.data.objects:
+        return base
+    i = 1
+    while f"{base}_{i:02d}" in bpy.data.objects:
+        i += 1
+    return f"{base}_{i:02d}"
+
+
+class KIMODO_OT_sample_curve_as_waypoints(Operator):
+    bl_idname = "kimodo.sample_curve_as_waypoints"
+    bl_label = "采样曲线路径"
+    bl_description = "将 Bezier/NURBS 曲线按弧长采样为 Root XZ 约束路点"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = context.scene
+        curve = scene.kimodo_path_curve
+        if curve is None or curve.type != "CURVE":
+            self.report({"ERROR"}, "请先选择路径曲线")
+            return {"CANCELLED"}
+        if scene.kimodo_path_start_frame >= scene.kimodo_path_end_frame:
+            self.report({"ERROR"}, "路径结束帧必须大于开始帧")
+            return {"CANCELLED"}
+
+        from ..retarget.constraints import sample_curve_arc_length
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = sample_curve_arc_length(
+            curve,
+            int(scene.kimodo_path_waypoints),
+            depsgraph,
+        )
+        if not positions:
+            self.report({"ERROR"}, "曲线没有可采样点")
+            return {"CANCELLED"}
+
+        # Replace previous path-generated waypoints so resampling is deterministic.
+        remove_indices = []
+        for idx, item in enumerate(scene.kimodo_motion_constraints):
+            obj = item.marker_object
+            if obj and obj.get("kimodo_path_waypoint"):
+                bpy.data.objects.remove(obj, do_unlink=True)
+                remove_indices.append(idx)
+        for idx in reversed(remove_indices):
+            scene.kimodo_motion_constraints.remove(idx)
+
+        saved_active = context.active_object
+        saved_selected = list(context.selected_objects)
+        bpy.ops.object.select_all(action="DESELECT")
+
+        start_f = int(scene.kimodo_path_start_frame)
+        end_f = int(scene.kimodo_path_end_frame)
+        count = len(positions)
+        for i, pos in enumerate(positions):
+            frame = round(start_f + (end_f - start_f) * i / max(count - 1, 1))
+            bpy.ops.object.empty_add(type="ARROWS", location=pos)
+            empty = context.active_object
+            empty.name = _unique_object_name(f"Kimodo_Path_{i + 1:02d}")
+            empty.empty_display_size = 0.15
+            empty.show_name = True
+            empty["kimodo_constraint"] = True
+            empty["kimodo_path_waypoint"] = True
+
+            item = scene.kimodo_motion_constraints.add()
+            item.constraint_type = "root2d"
+            item.frame = int(frame)
+            item.marker_object = empty
+            item.enabled = True
+            item.label = empty.name
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in saved_selected:
+            if obj.name in bpy.data.objects:
+                obj.select_set(True)
+        if saved_active and saved_active.name in bpy.data.objects:
+            context.view_layer.objects.active = saved_active
+
+        scene.kimodo_enable_constraints = True
+        scene.kimodo_action_start_frame = start_f
+        self.report({"INFO"}, f"已添加 {count} 个路径路点")
+        return {"FINISHED"}
+
+
+class KIMODO_OT_add_constraint_marker(Operator):
+    bl_idname = "kimodo.add_constraint_marker"
+    bl_label = "添加约束标记"
+    bl_description = "在 3D Cursor 位置添加 Kimodo 约束 Empty"
+    bl_options = {"REGISTER", "UNDO"}
+
+    constraint_type: bpy.props.StringProperty(default="root2d")
+
+    def execute(self, context):
+        scene = context.scene
+        location = context.scene.cursor.location
+        bpy.ops.object.empty_add(type="ARROWS", location=location)
+        empty = context.active_object
+        empty.name = _unique_object_name(f"Kimodo_{self.constraint_type}_{scene.frame_current}")
+        empty.empty_display_size = 0.18
+        empty.show_name = True
+        empty["kimodo_constraint"] = True
+
+        item = scene.kimodo_motion_constraints.add()
+        item.constraint_type = self.constraint_type
+        item.frame = int(scene.frame_current)
+        item.marker_object = empty
+        item.enabled = True
+        item.label = empty.name
+        scene.kimodo_constraint_index = len(scene.kimodo_motion_constraints) - 1
+        scene.kimodo_enable_constraints = True
+        self.report({"INFO"}, f"已添加约束: {empty.name}")
+        return {"FINISHED"}
+
+
+class KIMODO_OT_clear_constraints(Operator):
+    bl_idname = "kimodo.clear_constraints"
+    bl_label = "清空约束"
+    bl_description = "清除 Kimodo 约束列表和由插件创建的约束 Empty"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = context.scene
+        for item in scene.kimodo_motion_constraints:
+            obj = item.marker_object
+            if obj and obj.get("kimodo_constraint"):
+                bpy.data.objects.remove(obj, do_unlink=True)
+        scene.kimodo_motion_constraints.clear()
+        scene.kimodo_constraint_json_preview = ""
+        self.report({"INFO"}, "Kimodo 约束已清空")
+        return {"FINISHED"}
+
+
+class KIMODO_OT_preview_constraints_json(Operator):
+    bl_idname = "kimodo.preview_constraints_json"
+    bl_label = "预览约束 JSON"
+    bl_description = "构建并缓存当前 Kimodo 官方约束 JSON"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        scene = context.scene
+        target_arm = context.active_object if context.active_object and context.active_object.type == "ARMATURE" else None
+        try:
+            from ..retarget import constraints as kimodo_constraints
+            from ..retarget.mapping import load_preset
+            from ..retarget import skeleton_detect
+
+            preset_name = scene.kimodo_retarget_preset
+            if preset_name == "AUTO" and target_arm:
+                preset_name = skeleton_detect.detect_skeleton_preset(target_arm) or "mixamo"
+            elif preset_name == "AUTO":
+                preset_name = "mixamo"
+            result = kimodo_constraints.build_constraints_json(
+                scene.kimodo_motion_constraints,
+                scene,
+                target_arm=target_arm,
+                bone_mapping=load_preset(preset_name),
+                action_start_frame=int(scene.kimodo_action_start_frame),
+                auto_canonicalize=bool(scene.kimodo_auto_canonicalize),
+            )
+            scene.kimodo_constraint_json_preview = json.dumps(result.constraints, indent=2)
+            self.report({"INFO"}, f"约束 JSON: {len(result.constraints)} 个 block")
+            return {"FINISHED"}
+        except Exception as e:
+            self.report({"ERROR"}, f"约束 JSON 构建失败: {e}")
+            return {"CANCELLED"}
+
+
+class KIMODO_OT_create_soma_proxy(Operator):
+    bl_idname = "kimodo.create_soma_proxy"
+    bl_label = "创建 SOMA 约束骨架"
+    bl_description = "创建用于 fullbody/手脚约束的 SOMA proxy armature"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from ..retarget.constraints import create_soma_proxy_armature
+
+        arm = create_soma_proxy_armature(context)
+        context.view_layer.objects.active = arm
+        self.report({"INFO"}, f"已创建 {arm.name}")
+        return {"FINISHED"}
+
+
+class KIMODO_OT_add_motion_segment(Operator):
+    bl_idname = "kimodo.add_motion_segment"
+    bl_label = "添加动作分段"
+    bl_description = "按当前 prompt 和帧范围添加一个 multi-prompt 分段"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = context.scene
+        seg = scene.kimodo_motion_segments.add()
+        if len(scene.kimodo_motion_segments) > 1:
+            start_frame = max(
+                int(scene.kimodo_motion_segments[i].end_frame)
+                for i in range(len(scene.kimodo_motion_segments) - 1)
+            ) + 1
+        else:
+            start_frame = int(scene.kimodo_action_start_frame)
+        seg.prompt = scene.kimodo_prompt
+        seg.start_frame = start_frame
+        seg.end_frame = start_frame + int(scene.kimodo_num_frames) - 1
+        seg.enabled = True
+        seg.seed = int(scene.kimodo_seed)
+        scene.kimodo_segment_index = len(scene.kimodo_motion_segments) - 1
+        self.report({"INFO"}, "已添加动作分段")
+        return {"FINISHED"}
+
+
+class KIMODO_OT_clear_motion_segments(Operator):
+    bl_idname = "kimodo.clear_motion_segments"
+    bl_label = "清空动作分段"
+    bl_description = "清空 multi-prompt 动作分段"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        context.scene.kimodo_motion_segments.clear()
+        self.report({"INFO"}, "动作分段已清空")
+        return {"FINISHED"}
 
 
 # ── Action management (for KIMODO_PT_actions panel) ──
@@ -538,6 +896,13 @@ classes = [
     KIMODO_OT_translate_fetch_models,
     KIMODO_OT_translate_test,
     KIMODO_OT_generate,
+    KIMODO_OT_sample_curve_as_waypoints,
+    KIMODO_OT_add_constraint_marker,
+    KIMODO_OT_clear_constraints,
+    KIMODO_OT_preview_constraints_json,
+    KIMODO_OT_create_soma_proxy,
+    KIMODO_OT_add_motion_segment,
+    KIMODO_OT_clear_motion_segments,
     KIMODO_OT_switch_action,
     KIMODO_OT_delete_action,
     KIMODO_OT_load_model,

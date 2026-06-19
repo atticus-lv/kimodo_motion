@@ -1,12 +1,16 @@
 import bpy
-from bpy.types import AddonPreferences
+from bpy.types import AddonPreferences, PropertyGroup
 from bpy.props import (
     StringProperty,
     IntProperty,
     BoolProperty,
     EnumProperty,
+    FloatProperty,
+    PointerProperty,
+    CollectionProperty,
 )
 import os
+import sys
 
 
 # ── Translation API provider presets ──
@@ -98,6 +102,35 @@ def _sync_from_frames(self, context):
         self.kimodo_duration = frames_to_secs(self.kimodo_num_frames)
     finally:
         _syncing = False
+
+
+class KimodoConstraintItem(PropertyGroup):
+    label: StringProperty(name="名称", default="")
+    constraint_type: EnumProperty(
+        name="类型",
+        items=[
+            ("root2d", "Root XZ", "约束角色根节点在地面的路径/路点"),
+            ("fullbody", "Full Body", "SOMA proxy 全身姿态约束"),
+            ("left_hand", "L Hand", "左手目标"),
+            ("right_hand", "R Hand", "右手目标"),
+            ("left_foot", "L Foot", "左脚目标"),
+            ("right_foot", "R Foot", "右脚目标"),
+        ],
+        default="root2d",
+    )
+    frame: IntProperty(name="帧", default=1, min=0)
+    marker_object: PointerProperty(name="对象", type=bpy.types.Object)
+    enabled: BoolProperty(name="启用", default=True)
+    include_heading: BoolProperty(name="朝向", default=False)
+    heading_angle: FloatProperty(name="角度", default=0.0, subtype="ANGLE")
+
+
+class KimodoMotionSegment(PropertyGroup):
+    prompt: StringProperty(name="Prompt", default="A person walks forward.")
+    start_frame: IntProperty(name="开始帧", default=1, min=0)
+    end_frame: IntProperty(name="结束帧", default=180, min=1)
+    enabled: BoolProperty(name="启用", default=True)
+    seed: IntProperty(name="种子", default=-1, min=-1)
 
 
 class KimodoPreferences(AddonPreferences):
@@ -358,6 +391,99 @@ def register_props():
         max=200,
         description="去噪步数（越高质量越好，速度越慢）",
     )
+    bpy.types.Scene.kimodo_action_start_frame = IntProperty(
+        name="起始帧",
+        default=0,
+        min=0,
+        description="生成 Action 写入的起始帧；约束/曲线会以此作为 Kimodo 第 0 帧",
+    )
+    bpy.types.Scene.kimodo_enable_constraints = BoolProperty(
+        name="启用约束",
+        default=False,
+        description="将曲线路径/标记点作为 Kimodo 官方约束发送",
+    )
+    bpy.types.Scene.kimodo_motion_constraints = CollectionProperty(
+        type=KimodoConstraintItem
+    )
+    bpy.types.Scene.kimodo_constraint_index = IntProperty(
+        name="约束索引",
+        default=0,
+        min=0,
+    )
+    bpy.types.Scene.kimodo_auto_canonicalize = BoolProperty(
+        name="自动规范原点",
+        default=True,
+        description="将最早的 root/fullbody 约束点作为 Kimodo XZ 原点",
+    )
+    bpy.types.Scene.kimodo_post_processing = BoolProperty(
+        name="官方后处理",
+        default=False,
+        description=(
+            "尝试启用 Kimodo motion_correction 官方后处理；macOS/Apple Silicon 默认不安装该原生扩展，服务端会自动跳过"
+            if sys.platform == "darwin"
+            else "尝试启用 Kimodo motion_correction 官方后处理以减少约束偏差/脚滑"
+        ),
+    )
+    bpy.types.Scene.kimodo_text_cfg = FloatProperty(
+        name="Text CFG",
+        default=2.0,
+        min=0.0,
+        max=20.0,
+        description="文字提示引导强度",
+    )
+    bpy.types.Scene.kimodo_constraint_cfg = FloatProperty(
+        name="Constraint CFG",
+        default=2.0,
+        min=0.0,
+        max=20.0,
+        description="约束引导强度",
+    )
+    bpy.types.Scene.kimodo_root_margin = FloatProperty(
+        name="Root Margin",
+        default=0.04,
+        min=0.0,
+        max=1.0,
+        precision=3,
+        description="Kimodo motion_correction 官方后处理的 root 容差（米）；后处理关闭或不可用时不生效",
+    )
+    bpy.types.Scene.kimodo_num_transition_frames = IntProperty(
+        name="过渡帧",
+        default=5,
+        min=1,
+        max=30,
+        description="多段 prompt 之间的过渡帧数",
+    )
+    bpy.types.Scene.kimodo_path_curve = PointerProperty(
+        name="路径曲线",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == "CURVE",
+    )
+    bpy.types.Scene.kimodo_path_waypoints = IntProperty(
+        name="路点数",
+        default=8,
+        min=2,
+        max=30,
+        description="沿曲线按弧长采样为 root2d 约束的路点数",
+    )
+    bpy.types.Scene.kimodo_path_start_frame = IntProperty(
+        name="路径开始",
+        default=0,
+        min=0,
+    )
+    bpy.types.Scene.kimodo_path_end_frame = IntProperty(
+        name="路径结束",
+        default=179,
+        min=1,
+    )
+    bpy.types.Scene.kimodo_constraint_json_preview = StringProperty(
+        name="约束 JSON",
+        default="",
+        options={"HIDDEN"},
+    )
+    bpy.types.Scene.kimodo_motion_segments = CollectionProperty(
+        type=KimodoMotionSegment
+    )
+    bpy.types.Scene.kimodo_segment_index = IntProperty(name="分段索引", default=0, min=0)
     bpy.types.Scene.kimodo_translation_note = StringProperty(
         name="_translation_note",
         default="",
@@ -375,6 +501,23 @@ def unregister_props():
         "kimodo_num_samples",
         "kimodo_seed",
         "kimodo_diffusion_steps",
+        "kimodo_action_start_frame",
+        "kimodo_enable_constraints",
+        "kimodo_motion_constraints",
+        "kimodo_constraint_index",
+        "kimodo_auto_canonicalize",
+        "kimodo_post_processing",
+        "kimodo_text_cfg",
+        "kimodo_constraint_cfg",
+        "kimodo_root_margin",
+        "kimodo_num_transition_frames",
+        "kimodo_path_curve",
+        "kimodo_path_waypoints",
+        "kimodo_path_start_frame",
+        "kimodo_path_end_frame",
+        "kimodo_constraint_json_preview",
+        "kimodo_motion_segments",
+        "kimodo_segment_index",
         "kimodo_translation_note",
     ]
     for p in props:
@@ -382,4 +525,4 @@ def unregister_props():
             delattr(bpy.types.Scene, p)
 
 
-classes = [KimodoPreferences]
+classes = [KimodoConstraintItem, KimodoMotionSegment, KimodoPreferences]
