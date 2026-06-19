@@ -156,8 +156,9 @@ if "$VPY" -c 'import kimodo' >/dev/null 2>&1; then
     log OK "kimodo $("$VPY" -c 'import kimodo; print(getattr(kimodo,"__version__","unknown"))' 2>/dev/null) already installed — skip"
 else
     # SKIP_MOTION_CORRECTION_IN_SETUP=1: kimodo's optional C++ motion-correction
-    # extension is x86-SSE only and won't compile on arm64; skip it (kimodo falls back
-    # to the pure-Python postprocessing path). Honored by upstream + fork setup.py.
+    # extension is x86-SSE only and won't compile on arm64. We skip that native
+    # post-processing package on macOS; the server disables post_processing when it
+    # is unavailable instead of failing the whole generation.
     # KIMODO_GIT_URL may be a local directory (e.g. a working copy with MPS support):
     # install it as a path; otherwise treat it as a git URL.
     if [ -d "$KIMODO_GIT_URL" ]; then
@@ -171,6 +172,11 @@ else
             --index-url "$PIP_INDEX" --retries 5 --timeout 180 \
             || die "kimodo install failed"
     fi
+fi
+if "$VPY" -c 'import importlib.util; raise SystemExit(0 if importlib.util.find_spec("motion_correction") else 1)' >/dev/null 2>&1; then
+    log OK "Kimodo motion_correction found — official post-processing can be enabled."
+else
+    log WARN "Kimodo motion_correction is not installed on macOS; official post-processing will be skipped unless you install a compatible build."
 fi
 # Sanity: warn loudly if the installed kimodo lacks the MPS backend (e.g. the remote
 # fork was not pushed) — generation would silently fall back to CPU.

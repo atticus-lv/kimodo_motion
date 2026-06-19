@@ -165,7 +165,7 @@ Windows 也可 `powershell -File installer\uninstall.ps1`。系统 Python 全程
 
 **macOS 显示 MPS 不可用** — 需 Apple Silicon + arm64 原生 Blender/Python；否则回落 CPU（慢）。可 `KIMODO_DEVICE=cpu` 显式走 CPU。
 
-**kimodo 在 arm64 编译失败（MotionCorrection / cmake）** — 该 C++ 扩展是 x86-SSE，arm64 不编译；macOS 安装器已自动 `SKIP_MOTION_CORRECTION_IN_SETUP=1` 跳过（kimodo 回退纯 Python 后处理）。
+**kimodo 在 arm64 编译失败（MotionCorrection / cmake）** — 该 C++ 扩展是 x86-SSE，arm64 不编译；macOS 安装器已自动 `SKIP_MOTION_CORRECTION_IN_SETUP=1` 跳过。插件服务端会在 `motion_correction` 不可用时跳过官方 `post_processing`，避免生成失败；若你手动安装了兼容构建，再在面板里启用官方后处理。
 
 **磁盘不够 / 想搬模型** — 设 `HF_HOME=<目标盘>/hf-cache`（所有 HF 工具会认；macOS 项目内安装默认已在 venv 旁）。
 

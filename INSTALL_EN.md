@@ -171,7 +171,7 @@ A missing `refs/main` or `snapshots/` makes huggingface_hub treat the model as u
 
 **MPS unavailable (macOS)** — needs Apple Silicon + native arm64 Blender/Python; otherwise CPU fallback. Force with `KIMODO_DEVICE=cpu`.
 
-**kimodo fails to build on arm64 (MotionCorrection / cmake)** — that C++ extension is x86-SSE only; the macOS installer auto-sets `SKIP_MOTION_CORRECTION_IN_SETUP=1` (kimodo uses its pure-Python postprocess fallback).
+**kimodo fails to build on arm64 (MotionCorrection / cmake)** — that C++ extension is x86-SSE only; the macOS installer auto-sets `SKIP_MOTION_CORRECTION_IN_SETUP=1`. The add-on server skips official `post_processing` when `motion_correction` is unavailable so generation does not fail; enable official post-processing in the panel only after installing a compatible build.
 
 **Out of disk / move models** — set `HF_HOME=<drive>/hf-cache` (all HF tools honor it; macOS project-local install already keeps it next to the venv).
 
