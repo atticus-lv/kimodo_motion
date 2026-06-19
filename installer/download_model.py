@@ -1,6 +1,6 @@
 """Download the Kimodo SOMA model + LLaMA-3-8B text encoder with fallbacks.
 
-Run this INSIDE the ~/.kimodo_venv interpreter (it needs `huggingface_hub`
+Run this inside the Kimodo runtime interpreter (it needs `huggingface_hub`,
 which was pulled in by `kimodo`).
 
 Usage:

@@ -35,6 +35,12 @@ TRANSLATE_PROVIDERS = [
 ]
 
 
+def default_venv_path() -> str:
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "KimodoMotionRuntime", "venv")
+    return os.path.join(os.path.expanduser("~"), ".kimodo_venv")
+
+
 def _apply_provider_preset(prefs):
     """When user picks a provider from dropdown, auto-fill base_url + model."""
     for pid, _label, url, default_model in TRANSLATE_PROVIDERS:
@@ -153,7 +159,7 @@ class KimodoPreferences(AddonPreferences):
     )
     venv_path: StringProperty(
         name="虚拟环境路径",
-        default=os.path.join(os.path.expanduser("~"), ".kimodo_venv"),
+        default=default_venv_path(),
         subtype="DIR_PATH",
         description="Kimodo Python 虚拟环境路径",
     )

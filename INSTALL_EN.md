@@ -59,26 +59,48 @@ Double-click launcher: `installer\install.cmd`.
 
 **Panel:** N-panel > Kimodo > Runtime Install > **One-click install runtime** → opens Terminal and runs `install_mac.sh`.
 
-**Command line (recommended — keep the runtime inside the project folder; delete one dir to remove):**
+**Command line (recommended — keep the runtime in a visible folder; delete one dir to remove):**
 
 ```bash
 cd /path/to/kimodo_motion
-KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
+KIMODO_VENV="$HOME/KimodoMotionRuntime/venv" bash installer/install_mac.sh
 ```
 
-Then set the add-on's **venv path** preference to `<repo>/.kimodo-runtime/venv` — the venv, logs,
-**and the ~17 GB model cache** all land under `<repo>/.kimodo-runtime/`.
+Then set the add-on's **venv path** preference to `~/KimodoMotionRuntime/venv` — the venv, logs,
+**and the ~17 GB model cache** all land under `~/KimodoMotionRuntime/`.
+
+**Development / isolated testing:** if you want the runtime tied to the current working copy, you can still use:
+
+```bash
+KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
+```
 
 Installer options (environment variables):
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `KIMODO_VENV` | venv target (runtime/model cache sit next to it) | `~/.kimodo_venv` |
+| `KIMODO_VENV` | venv target (runtime/model cache sit next to it) | `~/KimodoMotionRuntime/venv` |
 | `KIMODO_PIP_MIRROR` | `auto` / `pypi` / `tsinghua` / `aliyun` | `auto` |
 | `KIMODO_PROXY` | HTTP(S) proxy | empty |
 | `KIMODO_GIT_URL` | kimodo git URL **or local directory** (must include MPS backend) | `https://github.com/atticus-lv/kimodo.git` |
 | `KIMODO_HF_HOME` | model cache location (overrides the default next to the venv) | `<venv parent>/hf-cache` |
 | `KIMODO_DEVICE` | `auto` / `mps` / `cpu` / `cuda` | `auto` (Mac → MPS) |
+
+### 3.3 macOS Official Post-Processing (Optional)
+
+The one-click installer skips Kimodo's native `motion_correction` extension by default. Generation still works; when the extension is unavailable, the add-on server automatically skips official `post_processing`. To enable official post-processing (constraint cleanup / foot-skate correction), run this after the one-click install:
+
+```bash
+brew install cmake simde pybind11 eigen
+
+KIMODO_VENV="$HOME/KimodoMotionRuntime/venv"  # or replace with the actual add-on venv path
+"$KIMODO_VENV/bin/python" -m pip install --force-reinstall --no-deps \
+  "kimodo @ git+https://github.com/atticus-lv/kimodo.git"
+
+"$KIMODO_VENV/bin/python" -c "import motion_correction; from motion_correction import motion_postprocess; print('motion_correction OK')"
+```
+
+After the verification command succeeds, the **Official post-processing** toggle in Blender will actually enable Kimodo post-processing. If verification fails, leave it disabled; generation will continue to work.
 
 **Differences from Windows:** no fbxsdkpy; no Python 3.12 constraint; PyTorch comes from PyPI
 (arm64 wheels ship MPS); device resolves `auto → cuda > mps > cpu`.
@@ -132,14 +154,15 @@ PY
 
 ## 5. Runtime layout and uninstall
 
-| Path (project-local macOS example) | Contents | Size |
+| Path (default macOS example) | Contents | Size |
 |------|----------|------|
 | `<venv>/` | Python venv + all pip packages | ~5 GB |
 | `<venv sibling>/hf-cache/` | Hugging Face model cache (Kimodo + LLaMA-3-8B) | ~17 GB |
 | `<venv sibling>/runtime/install.log` | install log | <1 MB |
 
 Windows defaults to `~/.kimodo_venv` with models in `~/.cache/huggingface` (set `HF_HOME` to relocate).
-**Uninstall:** delete the runtime folder (macOS project-local: `<repo>/.kimodo-runtime/`), or run
+macOS defaults to `~/KimodoMotionRuntime/venv`, with models and logs under `~/KimodoMotionRuntime/`.
+**Uninstall:** delete the runtime folder (macOS default: `~/KimodoMotionRuntime/`; project-local dev install: `<repo>/.kimodo-runtime/`), or run
 `powershell -File installer\uninstall.ps1` on Windows. The system Python is never modified.
 
 ### Offline model pack
@@ -171,7 +194,7 @@ A missing `refs/main` or `snapshots/` makes huggingface_hub treat the model as u
 
 **MPS unavailable (macOS)** — needs Apple Silicon + native arm64 Blender/Python; otherwise CPU fallback. Force with `KIMODO_DEVICE=cpu`.
 
-**kimodo fails to build on arm64 (MotionCorrection / cmake)** — that C++ extension is x86-SSE only; the macOS installer auto-sets `SKIP_MOTION_CORRECTION_IN_SETUP=1`. The add-on server skips official `post_processing` when `motion_correction` is unavailable so generation does not fail; enable official post-processing in the panel only after installing a compatible build.
+**kimodo fails to build on arm64 (MotionCorrection / cmake)** — the one-click installer defaults to `SKIP_MOTION_CORRECTION_IN_SETUP=1` for this optional extension. To enable official post-processing, follow §3.3 to install `cmake simde pybind11 eigen` and reinstall kimodo; otherwise the add-on server skips `post_processing` automatically so generation does not fail.
 
 **Out of disk / move models** — set `HF_HOME=<drive>/hf-cache` (all HF tools honor it; macOS project-local install already keeps it next to the venv).
 
@@ -189,7 +212,7 @@ source ~/.kimodo_venv/bin/activate            # Windows: .\.kimodo_venv\Scripts\
 # 2. PyTorch (macOS/Linux: default PyPI ships MPS/CPU; Windows CUDA uses --index-url cu128)
 pip install torch torchvision torchaudio      # Windows: --index-url https://download.pytorch.org/whl/cu128
 
-# 3. kimodo (MPS fork; skip the C++ extension on arm64)
+# 3. kimodo (MPS fork; skip the optional motion_correction post-processing extension by default)
 SKIP_MOTION_CORRECTION_IN_SETUP=1 pip install "kimodo @ git+https://github.com/atticus-lv/kimodo.git"
 
 # 4. server deps
@@ -207,7 +230,7 @@ python -m huggingface_hub.commands.huggingface_cli login
   - In-Blender retargeting (`retarget/bpy_retarget.py`); no Autodesk FBX SDK on any platform
   - New `install_mac.sh` (venv + PyTorch/MPS + kimodo + server deps, no fbxsdkpy)
   - Server device resolution `auto → cuda > mps > cpu` (`KIMODO_DEVICE` override)
-  - Contained runtime: venv + logs + model cache anchored to the venv path
+  - Contained runtime: macOS defaults to `~/KimodoMotionRuntime/`; project-local `.kimodo-runtime/` remains available for dev
   - Packaged as a Blender Extension (`blender_manifest.toml`); relicensed GPL-3.0-or-later
   - Docs merged into a single bilingual INSTALL; the ungated-mirror option is cross-platform
 - 2026-04-17 v1.5 — fbxsdkpy import-name fix (`fbx`), precheck dual verification + DLL-unload segfault guard

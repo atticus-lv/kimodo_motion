@@ -1,8 +1,8 @@
 """Kimodo Motion runtime precheck.
 
 Pure-stdlib diagnostic that tells Blender UI / install.ps1 what's
-missing. Safe to run under Blender's embedded Python OR the
-~/.kimodo_venv Python OR any system Python 3.8+.
+missing. Safe to run under Blender's embedded Python OR the Kimodo
+runtime Python OR any system Python 3.8+.
 
 Usage:
     python precheck.py                  -> prints JSON to stdout
@@ -16,7 +16,7 @@ Returns a dict with the contract:
 
     {
       "python_exe":   str | None,   # current interpreter running this script
-      "venv_exe":     str | None,   # ~/.kimodo_venv/Scripts/python.exe if exists
+      "venv_exe":     str | None,   # runtime python.exe if exists
       "venv_ready":   bool,
       "gpu":          {"name": str, "compute_cap": str, "driver": str,
                        "cuda": str | None, "vram_gb": float | None} | None,
@@ -55,8 +55,13 @@ from typing import Any
 
 SCHEMA = 1
 
-DEFAULT_VENV = Path.home() / ".kimodo_venv"
-DEFAULT_RUNTIME = Path.home() / ".kimodo_runtime"
+def _default_venv() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "KimodoMotionRuntime" / "venv"
+    return Path.home() / ".kimodo_venv"
+
+
+DEFAULT_VENV = _default_venv()
 HF_CACHE = Path.home() / ".cache" / "huggingface"
 HF_TOKEN_PATH = HF_CACHE / "token"
 # kimodo default cache is controlled by HF_HOME; use HF cache as
@@ -386,7 +391,7 @@ def run(probe_venv: bool = True, venv_path: str | None = None) -> dict[str, Any]
     kimodo_info["cache_size_gb"] = size_gb
 
     hf = _hf_token()
-    disk_free = _disk_free_gb(DEFAULT_RUNTIME)
+    disk_free = _disk_free_gb(venv_dir.parent)
 
     # Aggregate error checks.
     # Only claim pytorch/fbxsdkpy/kimodo are missing when we actually probed —
@@ -451,7 +456,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("--no-venv-probe", action="store_true")
-    ap.add_argument("--venv", default=None, help="venv path to check (default ~/.kimodo_venv)")
+    ap.add_argument("--venv", default=None, help=f"venv path to check (default {DEFAULT_VENV})")
     args = ap.parse_args()
     result = run(probe_venv=not args.no_venv_probe, venv_path=args.venv)
     indent = 2 if args.pretty else None

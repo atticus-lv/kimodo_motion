@@ -8,7 +8,7 @@
 #
 # Steps:
 #   1. Check macOS + locate Python 3.10-3.13
-#   2. Create ~/.kimodo_venv
+#   2. Create ~/KimodoMotionRuntime/venv
 #   3. pip mirror + upgrade pip
 #   4. Install PyTorch (default PyPI wheels — Apple Silicon builds ship MPS/Metal)
 #   5. Install kimodo (MPS fork by default) + FastAPI server deps
@@ -20,6 +20,10 @@
 #   KIMODO_GIT_URL      kimodo git URL (default: atticus-lv MPS fork)
 #   KIMODO_SKIP_TORCH   1 to skip torch (dev only)
 #
+# Optional official post-processing:
+#   Install cmake/simde/pybind11/eigen and reinstall kimodo without
+#   SKIP_MOTION_CORRECTION_IN_SETUP; see INSTALL.md.
+#
 # LICENSE: kimodo is Apache-2.0; Meta-Llama-3-8B is gated — supply your own HF token.
 
 set -uo pipefail
@@ -28,7 +32,7 @@ set -uo pipefail
 # (delete that one folder to fully uninstall). KIMODO_VENV is passed by the Blender
 # install panel from the addon's venv_path preference; runtime/log and the HF model
 # cache are placed as SIBLINGS of the venv so nothing lands in ~/.cache or system dirs.
-VENV_PATH="${KIMODO_VENV:-$HOME/.kimodo_venv}"
+VENV_PATH="${KIMODO_VENV:-$HOME/KimodoMotionRuntime/venv}"
 BASE_DIR="$(dirname "$VENV_PATH")"
 RUNTIME_DIR="${KIMODO_RUNTIME:-$BASE_DIR/runtime}"
 HF_CACHE="${KIMODO_HF_HOME:-$BASE_DIR/hf-cache}"
@@ -155,10 +159,10 @@ log INFO "fbxsdkpy is intentionally NOT installed on macOS — retarget runs ins
 if "$VPY" -c 'import kimodo' >/dev/null 2>&1; then
     log OK "kimodo $("$VPY" -c 'import kimodo; print(getattr(kimodo,"__version__","unknown"))' 2>/dev/null) already installed — skip"
 else
-    # SKIP_MOTION_CORRECTION_IN_SETUP=1: kimodo's optional C++ motion-correction
-    # extension is x86-SSE only and won't compile on arm64. We skip that native
-    # post-processing package on macOS; the server disables post_processing when it
-    # is unavailable instead of failing the whole generation.
+    # SKIP_MOTION_CORRECTION_IN_SETUP=1: keep the default macOS install small and
+    # robust by skipping kimodo's optional native motion-correction package. Recent
+    # kimodo forks can build it on Apple Silicon via SIMDe; see INSTALL.md for the
+    # optional official post-processing setup.
     # KIMODO_GIT_URL may be a local directory (e.g. a working copy with MPS support):
     # install it as a path; otherwise treat it as a git URL.
     if [ -d "$KIMODO_GIT_URL" ]; then
@@ -176,7 +180,8 @@ fi
 if "$VPY" -c 'import importlib.util; raise SystemExit(0 if importlib.util.find_spec("motion_correction") else 1)' >/dev/null 2>&1; then
     log OK "Kimodo motion_correction found — official post-processing can be enabled."
 else
-    log WARN "Kimodo motion_correction is not installed on macOS; official post-processing will be skipped unless you install a compatible build."
+    log WARN "Kimodo motion_correction is not installed on macOS; official post-processing will be skipped."
+    log WARN "Optional: brew install cmake simde pybind11 eigen, then reinstall kimodo without SKIP_MOTION_CORRECTION_IN_SETUP to enable it."
 fi
 # Sanity: warn loudly if the installed kimodo lacks the MPS backend (e.g. the remote
 # fork was not pushed) — generation would silently fall back to CPU.

@@ -56,25 +56,47 @@ powershell -ExecutionPolicy Bypass -File installer\install.ps1 -Proxy http://127
 
 **面板方式**：N 面板 > Kimodo > Runtime 安装 > `[一键安装 Runtime]` → 打开「终端」跑 `install_mac.sh`。
 
-**命令行方式（推荐，把运行时装进项目文件夹，删一个目录即清）**：
+**命令行方式（推荐，运行时放在可见目录，删一个目录即清）**：
 
 ```bash
 cd /path/to/kimodo_motion
-KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
+KIMODO_VENV="$HOME/KimodoMotionRuntime/venv" bash installer/install_mac.sh
 ```
 
-装好后把插件偏好里的 **venv 路径**设为 `<repo>/.kimodo-runtime/venv` —— venv、日志、**以及 ~17GB 模型缓存**都会落在 `<repo>/.kimodo-runtime/` 里。
+装好后把插件偏好里的 **venv 路径**设为 `~/KimodoMotionRuntime/venv` —— venv、日志、**以及 ~17GB 模型缓存**都会落在 `~/KimodoMotionRuntime/` 里。
+
+**开发 / 隔离测试**：如果你想把运行时跟当前仓库绑在一起，也可以继续用：
+
+```bash
+KIMODO_VENV="$(pwd)/.kimodo-runtime/venv" bash installer/install_mac.sh
+```
 
 安装器选项（环境变量）：
 
 | 变量 | 作用 | 默认 |
 |------|------|------|
-| `KIMODO_VENV` | venv 目标路径（运行时/模型缓存放它旁边） | `~/.kimodo_venv` |
+| `KIMODO_VENV` | venv 目标路径（运行时/模型缓存放它旁边） | `~/KimodoMotionRuntime/venv` |
 | `KIMODO_PIP_MIRROR` | `auto` / `pypi` / `tsinghua` / `aliyun` | `auto` |
 | `KIMODO_PROXY` | HTTP(S) 代理 | 空 |
 | `KIMODO_GIT_URL` | kimodo git 源**或本地目录**（须含 MPS 后端） | `https://github.com/atticus-lv/kimodo.git` |
 | `KIMODO_HF_HOME` | 模型缓存位置（覆盖默认的 venv 旁） | `<venv 父目录>/hf-cache` |
 | `KIMODO_DEVICE` | `auto` / `mps` / `cpu` / `cuda` | `auto`（Mac→MPS） |
+
+### 3.3 macOS 官方后处理（可选）
+
+一键安装默认跳过 Kimodo 的 `motion_correction` 原生扩展；生成可正常运行，插件服务端会在缺少该扩展时自动跳过官方 `post_processing`。如果你想启用官方后处理（约束修正/脚滑清理），可在完成一键安装后执行：
+
+```bash
+brew install cmake simde pybind11 eigen
+
+KIMODO_VENV="$HOME/KimodoMotionRuntime/venv"  # 或替换为插件偏好里的实际 venv 路径
+"$KIMODO_VENV/bin/python" -m pip install --force-reinstall --no-deps \
+  "kimodo @ git+https://github.com/atticus-lv/kimodo.git"
+
+"$KIMODO_VENV/bin/python" -c "import motion_correction; from motion_correction import motion_postprocess; print('motion_correction OK')"
+```
+
+验证通过后，Blender 面板里的“官方后处理”开关会真正生效；如果验证失败，保持关闭即可，生成不会因此失败。
 
 **与 Windows 的差异**：不装 fbxsdkpy；不受 Python 3.12 限制；PyTorch 来自 PyPI（arm64 轮子自带 MPS）；设备 `auto → cuda > mps > cpu`。
 
@@ -126,14 +148,15 @@ PY
 
 ## 5. 运行时结构与卸载
 
-| 路径（以项目内 macOS 安装为例） | 内容 | 大小 |
+| 路径（以默认 macOS 安装为例） | 内容 | 大小 |
 |------|------|------|
 | `<venv>/` | Python venv + 所有 pip 包 | ~5 GB |
 | `<venv 旁>/hf-cache/` | HuggingFace 模型缓存（Kimodo + LLaMA-3-8B） | ~17 GB |
 | `<venv 旁>/runtime/install.log` | 安装日志 | <1 MB |
 
 Windows 默认装在 `~/.kimodo_venv`，模型在 `~/.cache/huggingface`（可设 `HF_HOME` 搬家）。
-**卸载**：删除 venv 所在的运行时文件夹即可（macOS 项目内安装时删 `<repo>/.kimodo-runtime/`）；
+macOS 默认装在 `~/KimodoMotionRuntime/venv`，模型和日志同在 `~/KimodoMotionRuntime/`。
+**卸载**：删除 venv 所在的运行时文件夹即可（macOS 默认删 `~/KimodoMotionRuntime/`；项目内开发安装删 `<repo>/.kimodo-runtime/`）；
 Windows 也可 `powershell -File installer\uninstall.ps1`。系统 Python 全程不被改动。
 
 ### 离线模型包（网盘预下载）
@@ -165,7 +188,7 @@ Windows 也可 `powershell -File installer\uninstall.ps1`。系统 Python 全程
 
 **macOS 显示 MPS 不可用** — 需 Apple Silicon + arm64 原生 Blender/Python；否则回落 CPU（慢）。可 `KIMODO_DEVICE=cpu` 显式走 CPU。
 
-**kimodo 在 arm64 编译失败（MotionCorrection / cmake）** — 该 C++ 扩展是 x86-SSE，arm64 不编译；macOS 安装器已自动 `SKIP_MOTION_CORRECTION_IN_SETUP=1` 跳过。插件服务端会在 `motion_correction` 不可用时跳过官方 `post_processing`，避免生成失败；若你手动安装了兼容构建，再在面板里启用官方后处理。
+**kimodo 在 arm64 编译失败（MotionCorrection / cmake）** — 一键安装默认 `SKIP_MOTION_CORRECTION_IN_SETUP=1` 跳过该可选扩展。若要启用官方后处理，按 §3.3 安装 `cmake simde pybind11 eigen` 后重新安装 kimodo；否则插件服务端会自动跳过 `post_processing`，避免生成失败。
 
 **磁盘不够 / 想搬模型** — 设 `HF_HOME=<目标盘>/hf-cache`（所有 HF 工具会认；macOS 项目内安装默认已在 venv 旁）。
 
@@ -183,7 +206,7 @@ source ~/.kimodo_venv/bin/activate            # Windows: .\.kimodo_venv\Scripts\
 # 2. PyTorch（macOS/Linux: 默认 PyPI 即含 MPS/CPU；Windows CUDA 用 --index-url cu128）
 pip install torch torchvision torchaudio      # Windows: --index-url https://download.pytorch.org/whl/cu128
 
-# 3. kimodo（MPS fork；arm64 跳过 C++ 扩展）
+# 3. kimodo（MPS fork；默认跳过可选 motion_correction 后处理扩展）
 SKIP_MOTION_CORRECTION_IN_SETUP=1 pip install "kimodo @ git+https://github.com/atticus-lv/kimodo.git"
 
 # 4. 服务器依赖
@@ -201,7 +224,7 @@ python -m huggingface_hub.commands.huggingface_cli login
   - retarget 改为 **Blender 内完成**（`retarget/bpy_retarget.py`），所有平台不再依赖 Autodesk FBX SDK
   - 新增 `install_mac.sh`（venv + PyTorch/MPS + kimodo + 服务依赖，无 fbxsdkpy）
   - 服务器设备解析 `auto → cuda > mps > cpu`（`KIMODO_DEVICE` 可覆盖）
-  - 运行时容器化：venv + 日志 + 模型缓存锚定到 venv 路径，删一个文件夹即卸载
+  - 运行时容器化：macOS 默认 `~/KimodoMotionRuntime/`，开发可选项目内 `.kimodo-runtime/`
   - 打包为 Blender 扩展（`blender_manifest.toml`）；协议改为 GPL-3.0-or-later
   - 文档合并为单一 INSTALL（中/英），文本编码器"非门控镜像"方案跨平台通用
 - 2026-04-17 v1.5：fbxsdkpy import 名修正（`fbx`）、precheck 双重校验 + DLL-unload 段错误规避，install→precheck 全绿验收

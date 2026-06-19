@@ -51,6 +51,16 @@ def _installer_dir() -> Path:
 
 
 def _runtime_dir() -> Path:
+    if sys.platform == "darwin":
+        try:
+            from ..preferences import default_venv_path, get_prefs
+
+            venv_path = get_prefs().venv_path or default_venv_path()
+        except Exception:  # noqa: BLE001
+            from ..preferences import default_venv_path
+
+            venv_path = default_venv_path()
+        return Path(venv_path).expanduser().parent / "runtime"
     return Path.home() / ".kimodo_runtime"
 
 
@@ -74,13 +84,13 @@ def _run_precheck_sync() -> dict[str, Any]:
             "next_action": "run_install",
         }
 
-    from ..preferences import get_prefs  # lazy to avoid import-time cycles
+    from ..preferences import default_venv_path, get_prefs  # lazy to avoid import-time cycles
     from ..server import manager  # cross-platform venv python (bin/python on macOS)
 
     try:
         venv_path = get_prefs().venv_path
     except Exception:  # noqa: BLE001
-        venv_path = str(Path.home() / ".kimodo_venv")
+        venv_path = default_venv_path()
     venv_py = Path(manager.get_venv_python(venv_path))
 
     # Prefer running INSIDE the venv so we can introspect torch/kimodo (and MPS on macOS).
@@ -397,12 +407,12 @@ class KIMODO_OT_download_model(Operator):
 class KIMODO_OT_set_venv_to_default(Operator):
     bl_idname = "kimodo.set_venv_to_default"
     bl_label = "应用默认 venv 路径"
-    bl_description = "把 venv_path 设回 ~/.kimodo_venv"
+    bl_description = "把 venv_path 设回当前平台默认路径"
 
     def execute(self, context):
-        from ..preferences import get_prefs
+        from ..preferences import default_venv_path, get_prefs
 
-        default = str(Path.home() / ".kimodo_venv")
+        default = default_venv_path()
         get_prefs().venv_path = default
         self.report({"INFO"}, f"venv_path = {default}")
         return {"FINISHED"}
@@ -550,7 +560,9 @@ class KIMODO_PT_install(Panel):
 
             try:
                 current = get_prefs().venv_path
-                expected = str(Path.home() / ".kimodo_venv")
+                from ..preferences import default_venv_path
+
+                expected = default_venv_path()
                 if os.path.normcase(os.path.normpath(current)) != os.path.normcase(
                     os.path.normpath(expected)
                 ):
