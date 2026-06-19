@@ -21,7 +21,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import retarget.bpy_retarget as br  # noqa: E402
+import retarget.constraints as kc  # noqa: E402
 import retarget.mapping as mapping  # noqa: E402
+import retarget.motion_space as ms  # noqa: E402
 
 C3 = Matrix.Rotation(np.radians(90), 4, "X").to_3x3()  # SOMA Y-up -> Blender Z-up
 
@@ -174,6 +176,97 @@ def test_retarget_fk_matches_ground_truth():
     print(f"  [retarget] pose_err_max={pmax:.2e} m  root_err_max={rmax:.2e} m  (T={T})")
     assert pmax < 1e-3, f"pose FK mismatch {pmax}"
     assert rmax < 1e-3, f"root FK mismatch {rmax}"
+
+
+def test_motion_space_path_roundtrip():
+    ctx = ms.MotionSpaceContext.for_target(None, (1.0, 2.0, 0.0), root_scale=2.0)
+    target = Vector((1.0, -1.0, 0.0))
+    root2d = ctx.world_point_to_kimodo_2d(target)
+    back = ctx.kimodo_2d_to_world_point(root2d)
+    err = (back - target).length
+    print(f"  [motion_space] root2d={root2d} roundtrip_err={err:.2e} m")
+    assert err < 1e-6
+    assert abs(root2d[0]) < 1e-6 and abs(root2d[1] - 1.5) < 1e-6
+
+
+def test_constraints_json_root2d_frames_and_scale():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    sc = bpy.context.scene
+    sc.render.fps = 30
+    sc.render.fps_base = 1.0
+    bpy.ops.object.empty_add(type="ARROWS", location=(0, 0, 0))
+    a = bpy.context.object
+    bpy.ops.object.empty_add(type="ARROWS", location=(0, -2, 0))
+    b = bpy.context.object
+
+    class Item:
+        def __init__(self, obj, frame):
+            self.constraint_type = "root2d"
+            self.frame = frame
+            self.marker_object = obj
+            self.enabled = True
+            self.include_heading = False
+            self.heading_angle = 0.0
+
+    result = kc.build_constraints_json([Item(a, 10), Item(b, 40)], sc, action_start_frame=10)
+    block = result.constraints[0]
+    print(f"  [constraints] {block}")
+    assert block["type"] == "root2d"
+    assert block["frame_indices"] == [0, 30]
+    assert np.allclose(block["smooth_root_2d"], [[0.0, 0.0], [0.0, 2.0]])
+
+
+def test_retarget_root_anchor_scale_and_start_frame():
+    npz, names, parents, neutral, posed, T = _synthetic_motion()
+    arm = _build_target_armature(names, parents, neutral)
+    mapping_id = {n: n for n in names}
+    anchor = Vector((1.0, 2.0, 0.0))
+    action = br.retarget_sample(
+        arm,
+        npz,
+        mapping_id,
+        sample_index=0,
+        action_name="anchored",
+        with_root=True,
+        action_start_frame=20,
+        root_anchor_world=anchor,
+        root_scale=2.0,
+    )
+    assert int(action.frame_range[0]) == 20
+    assert int(action.frame_range[1]) == 20 + T - 1
+
+    sc = bpy.context.scene
+    sc.frame_set(20)
+    bpy.context.view_layer.update()
+    root0 = arm.matrix_world @ arm.pose.bones["Hips"].head
+    err0 = (root0 - anchor).length
+    sc.frame_set(20 + T - 1)
+    bpy.context.view_layer.update()
+    root1 = arm.matrix_world @ arm.pose.bones["Hips"].head
+    expected = anchor + (C3 @ Vector(posed[-1, 0] - posed[0, 0])) * 2.0
+    err1 = (root1 - expected).length
+    print(f"  [retarget_anchor] start_err={err0:.2e} end_err={err1:.2e}")
+    assert err0 < 1e-3
+    assert err1 < 1e-3
+
+
+def test_retarget_legacy_object_joint_names_npz():
+    npz, names, parents, neutral, _posed, _T = _synthetic_motion()
+    data = dict(np.load(npz, allow_pickle=False))
+    legacy_path = os.path.join(tempfile.gettempdir(), "kimodo_synth_legacy_names.npz")
+    data["joint_names"] = np.array(names, dtype=object)
+    np.savez(legacy_path, **data)
+
+    arm = _build_target_armature(names, parents, neutral)
+    action = br.retarget_sample(
+        arm,
+        legacy_path,
+        {n: n for n in names},
+        sample_index=0,
+        action_name="legacy_names",
+        with_root=True,
+    )
+    assert action is not None
 
 
 # ── harness ─────────────────────────────────────────────────────────────────

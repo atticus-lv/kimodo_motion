@@ -61,6 +61,35 @@ def _height_y_span(pts: np.ndarray) -> float:
     return float(pts[:, 1].max() - pts[:, 1].min())
 
 
+def _load_motion_npz(npz_path: str):
+    """Load Kimodo NPZ arrays, falling back only for legacy object metadata."""
+
+    def read(allow_pickle: bool):
+        data = np.load(npz_path, allow_pickle=allow_pickle)
+        try:
+            posed_arr = np.asarray(data["posed_joints"])
+            grm_arr = np.asarray(data["global_rot_mats"])
+            joint_names = [str(x) for x in data["joint_names"]]
+            neutral_arr = (
+                np.asarray(data["neutral_joints"], dtype=float)
+                if "neutral_joints" in data.files
+                else None
+            )
+            return posed_arr, grm_arr, joint_names, neutral_arr
+        finally:
+            data.close()
+
+    try:
+        return read(False)
+    except ValueError as e:
+        if "Object arrays cannot be loaded" not in str(e):
+            raise
+        # Legacy files written before 0.1.1 stored joint_names as dtype=object.
+        # New server output uses plain unicode strings so the safe path above works.
+        log.warning("Loading legacy pickle-backed NPZ metadata: %s", npz_path)
+        return read(True)
+
+
 def retarget_sample(
     target_arm: bpy.types.Object,
     npz_path: str,
@@ -69,6 +98,9 @@ def retarget_sample(
     action_name: str = "Kimodo",
     with_root: bool = True,
     axis_fix: str = "x+90",
+    action_start_frame: int = 0,
+    root_anchor_world=None,
+    root_scale: Optional[float] = None,
 ) -> bpy.types.Action:
     """Retarget one Kimodo motion sample onto target_arm, returning a new Action.
 
@@ -79,9 +111,7 @@ def retarget_sample(
     Cq = C.to_quaternion()
     Cq_inv = Cq.inverted()
 
-    d = np.load(npz_path, allow_pickle=True)
-    posed = np.asarray(d["posed_joints"])
-    grm = np.asarray(d["global_rot_mats"])
+    posed, grm, names, neutral_joints = _load_motion_npz(npz_path)
     # Clamp the requested sample to what the NPZ actually contains: if the server
     # produced fewer samples than the UI asked for, fall back to the last one rather
     # than raising an opaque numpy IndexError.
@@ -94,15 +124,14 @@ def retarget_sample(
     if grm.ndim == 5:  # [B,T,J,3,3]
         grm = grm[min(sample_index, grm.shape[0] - 1)]
     T, J = posed.shape[:2]
-    names = [str(x) for x in d["joint_names"]]
     idx = {n.lower(): i for i, n in enumerate(names)}
     if "hips" not in idx:
         log.warning("No 'Hips' joint in NPZ joint_names; using joint 0 as root.")
     hips = idx.get("hips", 0)
 
     # rest positions (for height/scale): neutral_joints if present, else frame 0
-    if "neutral_joints" in d.files and np.asarray(d["neutral_joints"]).shape[0] == J:
-        rest_pos = np.asarray(d["neutral_joints"], dtype=float)
+    if neutral_joints is not None and neutral_joints.shape[0] == J:
+        rest_pos = neutral_joints
     else:
         rest_pos = posed[0].astype(float)
 
@@ -134,10 +163,14 @@ def retarget_sample(
     zt = [(arm.matrix_world @ bones[tn].head_local).z for _, tn in pairs]
     tgt_h = (max(zt) - min(zt)) if len(zt) > 1 else src_h
     scale = (tgt_h / src_h) if src_h > 1e-6 else 1.0
+    if root_scale is not None and root_scale > 1e-6:
+        scale = float(root_scale)
 
     # root anchor: first animated frame (avoids injecting one hip-height of offset)
     s_anchor = Vector(posed[0, hips])
     hips_rest_world = (arm.matrix_world @ bones[hips_target].head_local) if hips_target else Vector((0, 0, 0))
+    if root_anchor_world is not None:
+        hips_rest_world = Vector(root_anchor_world)
     Mw_inv = arm.matrix_world.inverted()
 
     # ---- dedicated Action for this sample ----
@@ -156,10 +189,12 @@ def retarget_sample(
         arm.pose.bones[tn].rotation_mode = "QUATERNION"
 
     sc = bpy.context.scene
-    sc.frame_start, sc.frame_end = 0, T - 1
+    action_start_frame = int(action_start_frame)
+    sc.frame_start, sc.frame_end = action_start_frame, action_start_frame + T - 1
 
     for f in range(T):
-        sc.frame_set(f)
+        frame = action_start_frame + f
+        sc.frame_set(frame)
         for si, tn in pairs:
             pb = arm.pose.bones[tn]
             s_world = _npmat_to_quat(grm[f, si])
@@ -176,8 +211,8 @@ def retarget_sample(
             else:
                 m.translation = pb.matrix.translation
             pb.matrix = m
-            pb.keyframe_insert("rotation_quaternion", frame=f)
+            pb.keyframe_insert("rotation_quaternion", frame=frame)
             if with_root and si == hips:
-                pb.keyframe_insert("location", frame=f)
+                pb.keyframe_insert("location", frame=frame)
 
     return action
