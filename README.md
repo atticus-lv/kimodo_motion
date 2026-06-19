@@ -6,7 +6,7 @@ A Blender add-on that brings **NVIDIA Kimodo** text-to-motion generation into Bl
 prompt, select a character, and receive an animated Action — generated locally on your GPU and
 retargeted onto your rig.
 
-![Blender](https://img.shields.io/badge/Blender-5.0%2B-orange) ![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS-blue) ![Accelerator](https://img.shields.io/badge/CUDA%20%7C%20Metal%20(MPS)-green) ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
+![Blender](https://img.shields.io/badge/Blender-5.0%2B-orange) ![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-blue) ![Accelerator](https://img.shields.io/badge/CUDA%20%7C%20Metal%20(MPS)-green) ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 > Based on **[Xingxun7777/blender-kimodo-motion](https://github.com/Xingxun7777/blender-kimodo-motion)**
 > by Xingxun, extended with macOS / Apple Silicon (Metal/MPS) support, in-Blender retargeting, and
@@ -27,26 +27,34 @@ prompt-translation API).
 
 ## Compatibility
 
-| | Windows | macOS |
-|---|---|---|
-| Accelerator | NVIDIA RTX 20/30/40/50 (CUDA) | Apple Silicon (Metal / MPS) |
-| Blender | 5.0+ | 5.0+ |
-| Runtime Python | 3.10 – 3.13 | 3.10 – 3.13 |
-| Memory | 16 GB+ VRAM | 32 GB+ unified recommended |
-| Disk | ~25–50 GB | ~25–50 GB |
-| Status | Stable | Beta |
+| | Windows | macOS | Linux x64 |
+|---|---|---|---|
+| Accelerator | NVIDIA RTX 20/30/40/50 (CUDA) | Apple Silicon (Metal / MPS) | NVIDIA RTX (CUDA) |
+| Blender | 5.0+ | 5.0+ | 5.0+ |
+| Runtime Python | 3.10 – 3.13 | 3.10 – 3.13 | 3.10 – 3.13 |
+| Memory | 16 GB+ VRAM | 32 GB+ unified recommended | 16 GB+ VRAM |
+| Disk | ~25–50 GB | ~25–50 GB | ~25–50 GB |
+| Status | Stable | Validated | Manual install |
 
 Retargeting runs inside Blender on every platform, so the Autodesk FBX SDK is no longer required.
+Linux x64/CUDA uses the same server and in-Blender retarget path, but there is currently **no
+one-click runtime installer/package for Linux**; use the manual install steps in `INSTALL.md` /
+`INSTALL_EN.md`.
 
 ## Install & run
 
 1. Enable the extension: `Preferences > Add-ons > Install from Disk…` → `kimodo_motion.zip`.
-2. Install the runtime: **N-panel > Kimodo > Runtime Install > One-click install runtime**
-   (Python venv + PyTorch + kimodo + the inference server).
+2. Install the runtime:
+   - Windows / macOS: **N-panel > Kimodo > Runtime Install > One-click install runtime**
+     (Python venv + PyTorch + kimodo + the inference server).
+   - Linux x64/CUDA: no one-click installer yet; follow the manual install section in
+     `INSTALL.md` / `INSTALL_EN.md`.
 3. Set the add-on's **venv path** preference to where the runtime was installed.
 
-The text encoder needs **Meta-Llama-3-8B-Instruct** (~16 GB, gated by Meta); an ungated mirror is
-also supported. Full steps, options, and the model setup are in
+The runtime installs Kimodo from **[atticus-lv/kimodo](https://github.com/atticus-lv/kimodo)**, a
+fork with the MPS/macOS and post-processing compatibility work used by this add-on. The text
+encoder needs **Meta-Llama-3-8B-Instruct** (~16 GB, gated by Meta); an ungated mirror is also
+supported. Full steps, options, and the model setup are in
 **[INSTALL.md](./INSTALL.md)** (中文) / **[INSTALL_EN.md](./INSTALL_EN.md)** (English).
 
 ## Usage
@@ -103,7 +111,7 @@ original copyright and authorship are retained.
 |-----------|---------|
 | This add-on (`kimodo_motion/*`) | GPL-3.0-or-later |
 | Vendored retarget reference (`vendor/kimodo_retarget/*`) | Apache-2.0 ([ComfyUI-Kimodo](https://github.com/jtydhr88/ComfyUI-Kimodo)) |
-| [kimodo](https://github.com/nv-tlabs/kimodo) (NVIDIA) | Apache-2.0 |
+| [atticus-lv/kimodo](https://github.com/atticus-lv/kimodo), based on NVIDIA [kimodo](https://github.com/nv-tlabs/kimodo) | Apache-2.0 |
 | Kimodo-SOMA-RP-v1 weights | NVIDIA Open Model License |
 | Meta-Llama-3-8B-Instruct | Meta Llama-3 Community License (gated) |
 | PyTorch | BSD-3-Clause |

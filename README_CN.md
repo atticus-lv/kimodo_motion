@@ -5,7 +5,7 @@
 将 **NVIDIA Kimodo** 文本生成动作能力带入 Blender 的插件。输入一句 prompt、选中角色骨架，即可在
 本地 GPU 上生成动作并 retarget 到你的骨架，得到可直接使用的 Action。
 
-![Blender](https://img.shields.io/badge/Blender-5.0%2B-orange) ![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS-blue) ![Accelerator](https://img.shields.io/badge/CUDA%20%7C%20Metal%20(MPS)-green) ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
+![Blender](https://img.shields.io/badge/Blender-5.0%2B-orange) ![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-blue) ![Accelerator](https://img.shields.io/badge/CUDA%20%7C%20Metal%20(MPS)-green) ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 > 基于 **[Xingxun7777/blender-kimodo-motion](https://github.com/Xingxun7777/blender-kimodo-motion)**
 > （作者 Xingxun），新增 macOS / Apple Silicon（Metal/MPS）支持、Blender 内 retarget、扩展打包。
@@ -24,26 +24,32 @@
 
 ## 兼容性
 
-| | Windows | macOS |
-|---|---|---|
-| 加速器 | NVIDIA RTX 20/30/40/50（CUDA） | Apple Silicon（Metal / MPS） |
-| Blender | 5.0+ | 5.0+ |
-| 运行时 Python | 3.10 – 3.13 | 3.10 – 3.13 |
-| 显存/内存 | 16 GB+ 显存 | 建议 32 GB+ 统一内存 |
-| 磁盘 | ~25–50 GB | ~25–50 GB |
-| 状态 | 稳定 | Beta |
+| | Windows | macOS | Linux x64 |
+|---|---|---|---|
+| 加速器 | NVIDIA RTX 20/30/40/50（CUDA） | Apple Silicon（Metal / MPS） | NVIDIA RTX（CUDA） |
+| Blender | 5.0+ | 5.0+ | 5.0+ |
+| 运行时 Python | 3.10 – 3.13 | 3.10 – 3.13 | 3.10 – 3.13 |
+| 显存/内存 | 16 GB+ 显存 | 建议 32 GB+ 统一内存 | 16 GB+ 显存 |
+| 磁盘 | ~25–50 GB | ~25–50 GB | ~25–50 GB |
+| 状态 | 稳定 | 已验证 | 手工安装 |
 
 所有平台的 retarget 都在 Blender 内完成，因此**不再需要 Autodesk FBX SDK**。
+Linux x64/CUDA 复用同一套服务器与 Blender 内 retarget 链路，但目前**没有 Linux 一键运行时安装包**；
+请按 `INSTALL.md` / `INSTALL_EN.md` 的手工安装步骤配置。
 
 ## 安装与运行
 
 1. 启用扩展：`偏好设置 > 插件 > 从磁盘安装…` → `kimodo_motion.zip`。
-2. 安装运行时：**N 面板 > Kimodo > Runtime 安装 > 一键安装 Runtime**
-   （Python venv + PyTorch + kimodo + 推理服务器）。
+2. 安装运行时：
+   - Windows / macOS：**N 面板 > Kimodo > Runtime 安装 > 一键安装 Runtime**
+     （Python venv + PyTorch + kimodo + 推理服务器）。
+   - Linux x64/CUDA：暂时没有一键安装器，请按 `INSTALL.md` / `INSTALL_EN.md` 的手工安装步骤配置。
 3. 把插件偏好里的 **venv 路径**设为运行时实际安装的位置。
 
-文本编码器需要 **Meta-Llama-3-8B-Instruct**（约 16 GB，Meta 门控）；也支持非门控镜像。完整步骤、
-参数与模型设置见 **[INSTALL.md](./INSTALL.md)**（中文）/ **[INSTALL_EN.md](./INSTALL_EN.md)**（英文）。
+运行时默认安装 **[atticus-lv/kimodo](https://github.com/atticus-lv/kimodo)**，这是本插件使用的
+Kimodo fork，包含 MPS/macOS 与后处理兼容相关改动。文本编码器需要 **Meta-Llama-3-8B-Instruct**
+（约 16 GB，Meta 门控）；也支持非门控镜像。完整步骤、参数与模型设置见
+**[INSTALL.md](./INSTALL.md)**（中文）/ **[INSTALL_EN.md](./INSTALL_EN.md)**（英文）。
 
 ## 使用
 
@@ -96,7 +102,7 @@ Blender 内 retarget、项目内自包含运行时，并打包为 Blender 扩展
 |------|------|
 | 插件本身（`kimodo_motion/*`） | GPL-3.0-or-later |
 | Vendored retarget 参考（`vendor/kimodo_retarget/*`） | Apache-2.0（[ComfyUI-Kimodo](https://github.com/jtydhr88/ComfyUI-Kimodo)） |
-| [kimodo](https://github.com/nv-tlabs/kimodo)（NVIDIA） | Apache-2.0 |
+| [atticus-lv/kimodo](https://github.com/atticus-lv/kimodo)，基于 NVIDIA [kimodo](https://github.com/nv-tlabs/kimodo) | Apache-2.0 |
 | Kimodo-SOMA-RP-v1 权重 | NVIDIA Open Model License |
 | Meta-Llama-3-8B-Instruct | Meta Llama-3 Community License（门控） |
 | PyTorch | BSD-3-Clause |
