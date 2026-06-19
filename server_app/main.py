@@ -10,7 +10,7 @@ import time
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -55,6 +55,12 @@ def _make_progress_bar():
 # ── Request / Response models ──
 
 
+class SegmentRequest(BaseModel):
+    prompt: str
+    num_frames: Optional[int] = Field(None, ge=59, le=299)
+    duration: Optional[float] = Field(None, ge=2.0, le=10.0)
+
+
 class GenerateRequest(BaseModel):
     prompt: str
     duration: float = Field(6.0, ge=2.0, le=10.0)
@@ -64,6 +70,16 @@ class GenerateRequest(BaseModel):
     seed: int = -1
     diffusion_steps: int = Field(100, ge=10, le=200)
     output_bvh: bool = True
+    segments: list[SegmentRequest] = Field(default_factory=list)
+    constraints: list[dict[str, Any]] = Field(default_factory=list)
+    multi_prompt: bool = False
+    text_cfg: float = Field(2.0, ge=0.0, le=20.0)
+    constraint_cfg: float = Field(2.0, ge=0.0, le=20.0)
+    cfg_type: Optional[str] = None
+    first_heading_angle: Optional[float] = None
+    num_transition_frames: int = Field(5, ge=1, le=30)
+    post_processing: bool = False
+    root_margin: float = Field(0.04, ge=0.0, le=1.0)
 
 
 class LoadRequest(BaseModel):
@@ -77,6 +93,10 @@ class GenerateResponse(BaseModel):
     duration: float = 0.0
     model: str = ""
     prompt: str = ""
+    num_samples: int = 1
+    segments: list[dict[str, Any]] = Field(default_factory=list)
+    constraints_applied: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ── Endpoints ──
@@ -132,6 +152,77 @@ def _load_model_sync(model_name: str) -> str:
     return device
 
 
+def _clamped_num_frames(num_frames: Optional[int], duration: Optional[float]) -> int:
+    if num_frames is not None:
+        frames = int(num_frames)
+    else:
+        seconds = 6.0 if duration is None else float(duration)
+        frames = int(seconds * 30 - 1)
+    return max(59, min(299, frames))
+
+
+def _normalized_generation(req: GenerateRequest) -> tuple[Any, Any, bool, list[dict[str, Any]], float]:
+    if req.segments:
+        prompts = [seg.prompt for seg in req.segments]
+        frames = [_clamped_num_frames(seg.num_frames, seg.duration) for seg in req.segments]
+        duration = sum((f + 1) / 30.0 for f in frames)
+        return prompts, frames, True, [seg.dict() for seg in req.segments], duration
+    frames = _clamped_num_frames(req.num_frames, req.duration)
+    return req.prompt, frames, bool(req.multi_prompt), [], (frames + 1) / 30.0
+
+
+def _load_constraints(constraints: list[dict[str, Any]]):
+    if not constraints:
+        return []
+    try:
+        from kimodo.constraints import load_constraints_lst
+    except Exception as e:
+        raise RuntimeError(f"Installed kimodo has no constraints loader: {e}") from e
+    try:
+        return load_constraints_lst(constraints, _model.skeleton)
+    except Exception:
+        import json
+
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix="kimodo_constraints_", suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(constraints, f)
+            return load_constraints_lst(tmp_path, _model.skeleton)
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+
+def _sample_count_from_npz(npz_data: dict) -> int:
+    posed = npz_data.get("posed_joints")
+    if posed is not None and getattr(posed, "ndim", 0) == 4:
+        return int(posed.shape[0])
+    return 1
+
+
+def _motion_correction_available() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("motion_correction") is not None
+
+
+def _call_model_with_progress_fallback(kwargs: dict):
+    try:
+        return _model(**kwargs)
+    except TypeError as te:
+        # Older local installs may not expose progress_bar yet. Keep this narrow:
+        # official generation/constraint kwargs should fail loudly if missing.
+        if "progress_bar" not in str(te):
+            raise
+        retry_kwargs = dict(kwargs)
+        retry_kwargs.pop("progress_bar", None)
+        return _model(**retry_kwargs)
+
+
 @app.post("/load")
 def load(req: LoadRequest):
     """Eagerly load a model into memory so the next /generate skips the load wait."""
@@ -176,34 +267,55 @@ def generate(req: GenerateRequest):
 
     # Generate
     _progress.update(phase="sampling", step=0, total=req.diffusion_steps)
+    generation_warnings = []
     try:
-        # Kimodo 官方 demo 用 `duration * fps - 1` 作为 num_frames；新客户端可直接传 num_frames
-        if req.num_frames is not None:
-            num_frames = int(req.num_frames)
-        else:
-            num_frames = int(req.duration * 30 - 1)
-        # Clamp to Kimodo's valid range
-        num_frames = max(59, min(299, num_frames))
+        prompts, num_frames, multi_prompt, segment_meta, duration = _normalized_generation(req)
+        constraint_lst = _load_constraints(req.constraints)
+        post_processing = bool(req.post_processing)
+        if post_processing and not _motion_correction_available():
+            generation_warnings.append(
+                "post_processing skipped: motion_correction is unavailable in this runtime"
+            )
+            print(f"[Kimodo] WARN: {generation_warnings[-1]}")
+            post_processing = False
         kwargs = {
-            "prompts": req.prompt,  # Kimodo accepts str or list[str]
+            "prompts": prompts,  # Kimodo accepts str or list[str]
             "num_frames": num_frames,
             "num_denoising_steps": req.diffusion_steps,
+            "num_samples": req.num_samples,
+            "multi_prompt": multi_prompt,
+            "constraint_lst": constraint_lst,
+            "cfg_weight": [req.text_cfg, req.constraint_cfg],
+            "num_transition_frames": req.num_transition_frames,
+            "post_processing": post_processing,
+            "root_margin": req.root_margin,
             # Drives GET /progress; ignored shape-wise (tqdm-compatible callable).
             "progress_bar": _make_progress_bar(),
         }
+        if req.cfg_type:
+            kwargs["cfg_type"] = req.cfg_type
+        if req.first_heading_angle is not None:
+            kwargs["first_heading_angle"] = req.first_heading_angle
         if req.seed >= 0:
             import torch
 
             torch.manual_seed(req.seed)
-            torch.cuda.manual_seed(req.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(req.seed)
 
         try:
-            output = _model(**kwargs)
-        except TypeError as te:
-            # Upstream kimodo build without a progress_bar kwarg — retry plain.
-            if "progress_bar" in str(te):
-                kwargs.pop("progress_bar", None)
-                output = _model(**kwargs)
+            output = _call_model_with_progress_fallback(kwargs)
+        except Exception as model_e:
+            msg = str(model_e)
+            if post_processing and "motion_correction" in msg:
+                generation_warnings.append(
+                    "post_processing skipped: motion_correction failed to load in this runtime"
+                )
+                print(f"[Kimodo] WARN: {generation_warnings[-1]}")
+                kwargs = dict(kwargs)
+                kwargs["post_processing"] = False
+                _progress.update(phase="sampling", step=0, total=req.diffusion_steps)
+                output = _call_model_with_progress_fallback(kwargs)
             else:
                 raise
         _progress.update(running=False, phase="done")
@@ -250,7 +362,7 @@ def generate(req: GenerateRequest):
 
             bone_names = getattr(skel_for_meta, "bone_order_names", None)
             if bone_names:
-                npz_data["joint_names"] = np.array(list(bone_names), dtype=object)
+                npz_data["joint_names"] = np.array(list(bone_names), dtype=np.str_)
 
             nj = getattr(skel_for_meta, "neutral_joints", None)
             if nj is not None:
@@ -263,6 +375,7 @@ def generate(req: GenerateRequest):
         except Exception as meta_e:
             print(f"[Kimodo] WARN: skeleton metadata save failed: {meta_e}")
 
+        sample_count = _sample_count_from_npz(npz_data)
         np.savez(npz_path, **npz_data)
 
         # Save BVH if requested (SOMA models only)
@@ -283,6 +396,10 @@ def generate(req: GenerateRequest):
                     local_rots = torch.from_numpy(local_rots)
                 if not isinstance(root_pos, torch.Tensor):
                     root_pos = torch.from_numpy(root_pos)
+                if local_rots.ndim == 5:
+                    local_rots = local_rots[0]
+                if root_pos.ndim == 3:
+                    root_pos = root_pos[0]
 
                 bvh_path = f"{stem}.bvh"
                 save_motion_bvh(
@@ -305,10 +422,14 @@ def generate(req: GenerateRequest):
     return GenerateResponse(
         bvh_path=bvh_path,
         npz_path=npz_path,
-        num_frames=num_frames,
-        duration=req.duration,
+        num_frames=sum(num_frames) if isinstance(num_frames, list) else num_frames,
+        duration=duration,
         model=req.model,
-        prompt=req.prompt,
+        prompt=" | ".join(prompts) if isinstance(prompts, list) else req.prompt,
+        num_samples=sample_count,
+        segments=segment_meta,
+        constraints_applied=len(req.constraints),
+        warnings=generation_warnings,
     )
 
 

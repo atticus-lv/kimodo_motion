@@ -3,7 +3,7 @@
 import json
 import urllib.request
 import urllib.error
-from typing import Optional
+from typing import Any, Optional
 
 
 class KimodoClient:
@@ -53,6 +53,15 @@ class KimodoClient:
         diffusion_steps: int = 100,
         output_bvh: bool = False,
         num_frames: Optional[int] = None,
+        segments: Optional[list[dict[str, Any]]] = None,
+        constraints: Optional[list[dict[str, Any]]] = None,
+        text_cfg: float = 2.0,
+        constraint_cfg: float = 2.0,
+        cfg_type: Optional[str] = None,
+        first_heading_angle: Optional[float] = None,
+        num_transition_frames: int = 5,
+        post_processing: bool = False,
+        root_margin: float = 0.04,
     ) -> dict:
         """Request motion generation. Returns dict with 'npz_path' / 'bvh_path' and metadata.
 
@@ -68,9 +77,22 @@ class KimodoClient:
             "seed": seed,
             "diffusion_steps": diffusion_steps,
             "output_bvh": output_bvh,
+            "constraints": constraints or [],
+            "text_cfg": text_cfg,
+            "constraint_cfg": constraint_cfg,
+            "num_transition_frames": num_transition_frames,
+            "post_processing": post_processing,
+            "root_margin": root_margin,
         }
         if num_frames is not None:
             payload["num_frames"] = int(num_frames)
+        if segments:
+            payload["segments"] = segments
+            payload["multi_prompt"] = True
+        if cfg_type:
+            payload["cfg_type"] = cfg_type
+        if first_heading_angle is not None:
+            payload["first_heading_angle"] = float(first_heading_angle)
         # Generation can take 30-180s (model load + inference). Use long timeout.
         return self._post("/generate", payload, timeout=600.0)
 
@@ -91,8 +113,11 @@ class KimodoClient:
     def _get(self, path: str, timeout: float = 10.0) -> dict:
         url = self.base_url + path
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(_format_http_error(e)) from e
 
     def _post(self, path: str, data: dict, timeout: float = 30.0) -> dict:
         url = self.base_url + path
@@ -103,5 +128,21 @@ class KimodoClient:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(_format_http_error(e)) from e
+
+
+def _format_http_error(e: urllib.error.HTTPError) -> str:
+    body = ""
+    try:
+        body = e.read().decode("utf-8", errors="replace")
+        data = json.loads(body)
+        if isinstance(data, dict) and data.get("detail"):
+            body = str(data["detail"])
+    except Exception:
+        pass
+    suffix = f": {body}" if body else ""
+    return f"HTTP {e.code} {e.reason}{suffix}"
