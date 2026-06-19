@@ -5,7 +5,7 @@ All notable changes to the **Blender Kimodo Motion** addon.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — macOS / Apple Silicon (Metal/MPS) support
+## [2.0.0] — 2026-06-19 — macOS / Apple Silicon (Metal/MPS) support
 
 Brings the addon to macOS by removing the Autodesk FBX SDK dependency and routing
 inference through Metal/MPS. The retarget core is validated on local Blender against
